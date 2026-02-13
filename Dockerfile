@@ -18,7 +18,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
     build-essential \
-    sudo \
     jq \
     tree \
     vim-tiny \
@@ -30,9 +29,8 @@ RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.12 1
     update-alternatives --install /usr/bin/python python /usr/bin/python3.12 1 && \
     curl -sS https://bootstrap.pypa.io/get-pip.py | python3.12
 
-# Create paw user with sudo
-RUN useradd -m -s /bin/bash paw && \
-    echo "paw ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/paw
+# Create paw user
+RUN useradd -m -s /bin/bash paw
 
 # Set up PAW directories
 RUN mkdir -p /home/paw/data /home/paw/plugins /home/paw/workspace && \

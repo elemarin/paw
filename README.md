@@ -121,7 +121,7 @@ paw chat "Create a plugin that fetches weather data"
 ```bash
 PAW_LLM__API_KEY=sk-...          # Your LLM API key
 PAW_LLM__MODEL=openai/gpt-4o-mini  # Model to use
-PAW_API_KEY=                      # API auth key (empty = no auth)
+PAW_API_KEY=change-me-strong-key  # Required for API access
 ```
 
 ### Config File (`paw.yaml`)
