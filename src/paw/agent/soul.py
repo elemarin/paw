@@ -111,12 +111,12 @@ def load_markdown_memory(memory_dir: str | Path = "memory", now: datetime | None
     parts: list[str] = []
     for path in files:
         if not path.exists():
-            logger.debug("memory.file.missing", path=str(path))
+            logger.info("memory.file.missing", path=str(path))
             continue
 
         content = path.read_text(encoding="utf-8").strip()
         if not content:
-            logger.debug("memory.file.empty", path=str(path))
+            logger.info("memory.file.empty", path=str(path))
             continue
 
         logger.info("memory.file.loaded", path=str(path), length=len(content))
