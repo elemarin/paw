@@ -14,6 +14,7 @@ logger = structlog.get_logger()
 
 # Suppress litellm's noisy logging
 litellm.suppress_debug_info = True
+litellm.drop_params = True
 
 
 class LLMGateway:
@@ -38,6 +39,7 @@ class LLMGateway:
     ) -> Any:
         """Send a completion request through LiteLLM."""
         model = model or self.config.model
+        is_openai_model = model.startswith("openai/")
         temperature = temperature if temperature is not None else self.config.temperature
         max_tokens = max_tokens or self.config.max_tokens
 
@@ -49,13 +51,16 @@ class LLMGateway:
             "stream": stream,
         }
 
+        if is_openai_model:
+            kwargs["drop_params"] = True
+
         if self.config.api_key:
             kwargs["api_key"] = self.config.api_key
         if self.config.api_base:
             kwargs["api_base"] = self.config.api_base
         if tools:
             kwargs["tools"] = tools
-        if tool_choice:
+        if tool_choice and not is_openai_model:
             kwargs["tool_choice"] = tool_choice
 
         start = time.monotonic()

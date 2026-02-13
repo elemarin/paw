@@ -57,11 +57,12 @@ def _load_last_conversation() -> str | None:
 
 @app.command()
 def chat(
-    message: str = typer.Argument(..., help="Message to send to PAW"),
+    message: str | None = typer.Argument(None, help="Message to send to PAW (omit for interactive mode)"),
     base_url: str = typer.Option(DEFAULT_URL, "--url", "-u", envvar="PAW_URL"),
     api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
     conversation_id: str = typer.Option("", "--conversation", "-c", help="Resume a conversation by ID"),
     last: bool = typer.Option(False, "--last", "-l", help="Continue the last conversation"),
+    new: bool = typer.Option(False, "--new", help="Start a new conversation (ignore last conversation)"),
     no_agent: bool = typer.Option(False, "--no-agent", help="Simple proxy mode (no tools)"),
     model: str = typer.Option("", "--model", "-m", help="Override model"),
     raw: bool = typer.Option(False, "--raw", help="Output raw JSON response"),
@@ -69,62 +70,95 @@ def chat(
     """Send a message to PAW and get a response."""
     client = _get_client(base_url, api_key or None)
 
-    # Resolve conversation ID
-    if last and not conversation_id:
+    # Resolve conversation ID:
+    # - default behavior continues last conversation if available
+    if not conversation_id and not new:
         conversation_id = _load_last_conversation() or ""
-        if not conversation_id:
+        if last and not conversation_id:
             console.print("[yellow]No previous conversation found. Starting new one.[/yellow]")
 
-    payload: dict = {
-        "messages": [{"role": "user", "content": message}],
-        "agent_mode": not no_agent,
-    }
-    if conversation_id:
-        payload["conversation_id"] = conversation_id
-    if model:
-        payload["model"] = model
+    def _send(message_text: str, current_conversation_id: str) -> dict:
+        payload: dict = {
+            "messages": [{"role": "user", "content": message_text}],
+            "agent_mode": not no_agent,
+        }
+        if current_conversation_id:
+            payload["conversation_id"] = current_conversation_id
+        if model:
+            payload["model"] = model
 
-    try:
-        resp = client.post("/v1/chat/completions", json=payload)
-        resp.raise_for_status()
-    except httpx.ConnectError:
-        console.print(f"[red]Error:[/red] Cannot connect to PAW at {base_url}")
-        console.print("Is the server running? Start it with: docker compose up -d")
-        raise typer.Exit(1)
-    except httpx.HTTPStatusError as e:
-        console.print(f"[red]Error {e.response.status_code}:[/red] {e.response.text}")
-        raise typer.Exit(1)
+        try:
+            resp = client.post("/v1/chat/completions", json=payload)
+            resp.raise_for_status()
+        except httpx.ConnectError:
+            console.print(f"[red]Error:[/red] Cannot connect to PAW at {base_url}")
+            console.print("Is the server running? Start it with: docker compose up -d")
+            raise typer.Exit(1)
+        except httpx.HTTPStatusError as e:
+            console.print(f"[red]Error {e.response.status_code}:[/red] {e.response.text}")
+            raise typer.Exit(1)
 
-    data = resp.json()
+        return resp.json()
 
-    if raw:
-        console.print_json(json.dumps(data, indent=2))
+    def _render_response(data: dict) -> str:
+        if raw:
+            console.print_json(json.dumps(data, indent=2))
+        else:
+            content = data["choices"][0]["message"]["content"]
+            tools = data.get("tool_calls_made", 0)
+            conv_id = data.get("conversation_id", "")
+
+            console.print()
+            console.print(Markdown(content))
+            console.print()
+
+            meta_parts = []
+            if conv_id:
+                meta_parts.append(f"conversation: {conv_id[:8]}")
+            if tools:
+                meta_parts.append(f"tool calls: {tools}")
+            if data.get("usage"):
+                meta_parts.append(f"tokens: {data['usage'].get('total_tokens', '?')}")
+            if meta_parts:
+                console.print(f"[dim]{'  │  '.join(meta_parts)}[/dim]")
+
+        return data.get("conversation_id", "")
+
+    # One-shot mode
+    if message is not None:
+        data = _send(message, conversation_id)
+        conv_id = _render_response(data)
+        if conv_id:
+            _save_last_conversation(conv_id)
         return
 
-    content = data["choices"][0]["message"]["content"]
-    conv_id = data.get("conversation_id", "")
+    # Interactive mode
+    console.print("[bold cyan]PAW interactive chat[/bold cyan]  [dim](type /exit to quit, /new to start fresh)[/dim]")
+    while True:
+        try:
+            prompt = "[bold green]you[/bold green]"
+            if conversation_id:
+                prompt += f" [dim]{conversation_id[:8]}[/dim]"
+            user_input = console.input(f"{prompt}> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            console.print("\n[dim]bye[/dim]")
+            break
 
-    # Save for --last
-    if conv_id:
-        _save_last_conversation(conv_id)
+        if not user_input:
+            continue
+        if user_input.lower() in {"/exit", "/quit", "exit", "quit"}:
+            console.print("[dim]bye[/dim]")
+            break
+        if user_input.lower() == "/new":
+            conversation_id = ""
+            console.print("[yellow]Started a new conversation.[/yellow]")
+            continue
 
-    tools = data.get("tool_calls_made", 0)
-
-    # Render the response
-    console.print()
-    console.print(Markdown(content))
-    console.print()
-
-    # Footer info
-    meta_parts = []
-    if conv_id:
-        meta_parts.append(f"conversation: {conv_id[:8]}")
-    if tools:
-        meta_parts.append(f"tool calls: {tools}")
-    if data.get("usage"):
-        meta_parts.append(f"tokens: {data['usage'].get('total_tokens', '?')}")
-    if meta_parts:
-        console.print(f"[dim]{'  │  '.join(meta_parts)}[/dim]")
+        data = _send(user_input, conversation_id)
+        conv_id = _render_response(data)
+        if conv_id:
+            conversation_id = conv_id
+            _save_last_conversation(conv_id)
 
 
 @app.command()

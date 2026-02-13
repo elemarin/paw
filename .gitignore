@@ -28,3 +28,4 @@ paw.yaml
 # OS
 .DS_Store
 Thumbs.db
+.paw_last_conversation

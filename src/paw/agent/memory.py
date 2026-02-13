@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from paw.agent.tools import Tool
+
+if TYPE_CHECKING:
+    from paw.db.engine import Database
 
 logger = structlog.get_logger()
 
@@ -14,7 +17,7 @@ logger = structlog.get_logger()
 class MemoryTool(Tool):
     """Key-value memory that persists across conversations."""
 
-    def __init__(self, db: Any = None) -> None:
+    def __init__(self, db: Database | None = None) -> None:
         self._store: dict[str, str] = {}
         self._db = db
 
@@ -104,10 +107,7 @@ class MemoryTool(Tool):
         if not self._db:
             return
         try:
-            await self._db.execute(
-                "INSERT OR REPLACE INTO memory (key, value) VALUES (?, ?)",
-                (key, value),
-            )
+            await self._db.memory_set(key, value)
         except Exception as e:
             logger.error("memory.persist_failed", key=key, error=str(e))
 
