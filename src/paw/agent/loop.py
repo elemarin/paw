@@ -78,6 +78,11 @@ class AgentLoop:
 
             # --- THINK: Ask the LLM ---
             messages = conversation.to_messages()
+            logger.info(
+                "agent.think.start",
+                iteration=iteration,
+                message_count=len(messages),
+            )
             response = await self.gateway.completion(
                 messages=messages,
                 model=model,
@@ -98,6 +103,12 @@ class AgentLoop:
 
             # --- CHECK: Does the LLM want to call tools? ---
             tool_calls = getattr(message, "tool_calls", None)
+            logger.info(
+                "agent.think.result",
+                iteration=iteration,
+                has_tool_calls=bool(tool_calls),
+                finish_reason=choice.finish_reason,
+            )
 
             if not tool_calls:
                 # No tool calls — this is the final answer
