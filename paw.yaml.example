@@ -1,0 +1,42 @@
+# PAW Configuration
+# This file controls PAW's behavior. Environment variables override these values.
+
+# --- LLM ---
+llm:
+  model: "openai/gpt-4o-mini"    # LiteLLM model identifier (e.g., anthropic/claude-3-5-sonnet, ollama/llama3)
+  temperature: 0.7
+  max_tokens: 4096
+  fallback_models:                # Models to try if primary fails
+    # - "anthropic/claude-3-5-sonnet"
+
+# --- Agent ---
+agent:
+  max_iterations: 10              # Max ReAct loop iterations per request
+  max_tool_calls: 20              # Max tool calls per request
+  token_budget: 100000            # Max tokens per request
+  daily_token_budget: 1000000     # Daily token limit
+
+# --- Shell ---
+shell:
+  enabled: true
+  timeout: 30                     # Command timeout in seconds
+  blocked_commands:               # Always blocked
+    - reboot
+    - shutdown
+    - init
+    - mkfs
+  approval_patterns:              # Require user approval
+    - "rm -rf"
+    - "dd "
+    - "sudo"
+  writable_dirs:
+    - /home/paw/workspace
+    - /home/paw/plugins
+    - /home/paw/data
+    - /tmp
+
+# --- Server ---
+host: "0.0.0.0"
+port: 8000
+log_level: "INFO"
+log_format: "json"               # "json" or "console"

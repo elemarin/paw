@@ -1,0 +1,5 @@
+name: hello_world
+description: Example PAW plugin — demonstrates the plugin API
+version: 0.1.0
+author: PAW
+entry_point: __init__

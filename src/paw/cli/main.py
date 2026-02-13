@@ -1,0 +1,249 @@
+"""PAW CLI — command-line interface for interacting with the agent."""
+
+from __future__ import annotations
+
+import json
+import sys
+
+import httpx
+import typer
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
+
+app = typer.Typer(
+    name="paw",
+    help="PAW — Personal Agent Workspace",
+    no_args_is_help=True,
+    add_completion=False,
+)
+
+console = Console()
+
+DEFAULT_URL = "http://localhost:8000"
+
+
+def _get_client(base_url: str, api_key: str | None) -> httpx.Client:
+    headers = {}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return httpx.Client(base_url=base_url, headers=headers, timeout=120.0)
+
+
+@app.command()
+def chat(
+    message: str = typer.Argument(..., help="Message to send to PAW"),
+    base_url: str = typer.Option(DEFAULT_URL, "--url", "-u", envvar="PAW_URL"),
+    api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
+    conversation_id: str = typer.Option("", "--conversation", "-c", help="Resume a conversation"),
+    no_agent: bool = typer.Option(False, "--no-agent", help="Simple proxy mode (no tools)"),
+    model: str = typer.Option("", "--model", "-m", help="Override model"),
+    raw: bool = typer.Option(False, "--raw", help="Output raw JSON response"),
+) -> None:
+    """Send a message to PAW and get a response."""
+    client = _get_client(base_url, api_key or None)
+
+    payload: dict = {
+        "messages": [{"role": "user", "content": message}],
+        "agent_mode": not no_agent,
+    }
+    if conversation_id:
+        payload["conversation_id"] = conversation_id
+    if model:
+        payload["model"] = model
+
+    try:
+        resp = client.post("/v1/chat/completions", json=payload)
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        console.print(f"[red]Error:[/red] Cannot connect to PAW at {base_url}")
+        console.print("Is the server running? Start it with: docker compose up -d")
+        raise typer.Exit(1)
+    except httpx.HTTPStatusError as e:
+        console.print(f"[red]Error {e.response.status_code}:[/red] {e.response.text}")
+        raise typer.Exit(1)
+
+    data = resp.json()
+
+    if raw:
+        console.print_json(json.dumps(data, indent=2))
+        return
+
+    content = data["choices"][0]["message"]["content"]
+    conv_id = data.get("conversation_id", "")
+    tools = data.get("tool_calls_made", 0)
+
+    # Render the response
+    console.print()
+    console.print(Markdown(content))
+    console.print()
+
+    # Footer info
+    meta_parts = []
+    if conv_id:
+        meta_parts.append(f"conversation: {conv_id[:8]}")
+    if tools:
+        meta_parts.append(f"tool calls: {tools}")
+    if data.get("usage"):
+        meta_parts.append(f"tokens: {data['usage'].get('total_tokens', '?')}")
+    if meta_parts:
+        console.print(f"[dim]{'  │  '.join(meta_parts)}[/dim]")
+
+
+@app.command()
+def status(
+    base_url: str = typer.Option(DEFAULT_URL, "--url", "-u", envvar="PAW_URL"),
+    api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
+) -> None:
+    """Check PAW's status."""
+    client = _get_client(base_url, api_key or None)
+
+    try:
+        resp = client.get("/health")
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        console.print(f"[red]✗[/red] PAW is not running at {base_url}")
+        raise typer.Exit(1)
+
+    data = resp.json()
+
+    table = Table(title="🐾 PAW Status", show_header=False, border_style="blue")
+    table.add_column("Key", style="bold")
+    table.add_column("Value")
+
+    table.add_row("Status", f"[green]{data['status']}[/green]")
+    table.add_row("Version", data.get("version", "?"))
+    table.add_row("Uptime", data.get("uptime", "?"))
+    table.add_row("Model", data.get("model", "?"))
+
+    if "llm_stats" in data:
+        stats = data["llm_stats"]
+        table.add_row("Requests", str(stats.get("request_count", 0)))
+        table.add_row("Tokens Used", str(stats.get("total_tokens", 0)))
+        table.add_row("Cost", stats.get("total_cost", "$0"))
+
+    if "plugin_count" in data:
+        table.add_row("Plugins", str(data["plugin_count"]))
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+@app.command()
+def conversations(
+    base_url: str = typer.Option(DEFAULT_URL, "--url", "-u", envvar="PAW_URL"),
+    api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
+) -> None:
+    """List all conversations."""
+    client = _get_client(base_url, api_key or None)
+
+    try:
+        resp = client.get("/v1/conversations")
+        resp.raise_for_status()
+    except httpx.ConnectError:
+        console.print(f"[red]✗[/red] PAW is not running at {base_url}")
+        raise typer.Exit(1)
+    except httpx.HTTPStatusError:
+        console.print("[yellow]No conversations endpoint available yet.[/yellow]")
+        raise typer.Exit(0)
+
+    data = resp.json()
+
+    if not data:
+        console.print("[dim]No conversations yet.[/dim]")
+        return
+
+    table = Table(title="Conversations", border_style="blue")
+    table.add_column("ID", style="cyan", max_width=10)
+    table.add_column("Title")
+    table.add_column("Messages", justify="right")
+    table.add_column("Created")
+
+    for conv in data:
+        table.add_row(
+            conv["id"][:8] + "...",
+            conv.get("title", "Untitled")[:50],
+            str(conv.get("message_count", 0)),
+            conv.get("created_at", "")[:16],
+        )
+
+    console.print()
+    console.print(table)
+    console.print()
+
+
+@app.command()
+def memory(
+    action: str = typer.Argument("list", help="Action: list, get, set, delete"),
+    key: str = typer.Argument("", help="Memory key"),
+    value: str = typer.Argument("", help="Value (for 'set' action)"),
+    base_url: str = typer.Option(DEFAULT_URL, "--url", "-u", envvar="PAW_URL"),
+    api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
+) -> None:
+    """Manage PAW's persistent memory."""
+    # Memory is managed through the chat interface for now
+    if action == "list":
+        # Use the agent to list memory
+        chat_cmd = "List all your remembered memories using the memory tool."
+    elif action == "get" and key:
+        chat_cmd = f"Recall the memory with key '{key}' using the memory tool."
+    elif action == "set" and key and value:
+        chat_cmd = f"Remember this: key='{key}', value='{value}' using the memory tool."
+    elif action == "delete" and key:
+        chat_cmd = f"Forget the memory with key '{key}' using the memory tool."
+    else:
+        console.print("[red]Usage: paw memory <list|get|set|delete> [key] [value][/red]")
+        raise typer.Exit(1)
+
+    # Delegate to chat
+    console.print(f"[dim]→ {chat_cmd}[/dim]")
+    # Call the chat function programmatically
+    client = _get_client(base_url, api_key or None)
+    try:
+        resp = client.post("/v1/chat/completions", json={
+            "messages": [{"role": "user", "content": chat_cmd}],
+            "agent_mode": True,
+        })
+        resp.raise_for_status()
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        console.print()
+        console.print(Markdown(content))
+    except httpx.ConnectError:
+        console.print(f"[red]✗[/red] PAW is not running at {base_url}")
+        raise typer.Exit(1)
+
+
+@app.command()
+def serve(
+    host: str = typer.Option("0.0.0.0", "--host"),
+    port: int = typer.Option(8000, "--port"),
+    reload: bool = typer.Option(False, "--reload"),
+) -> None:
+    """Start the PAW server (for development)."""
+    import uvicorn
+    console.print(Panel("🐾 Starting PAW server...", border_style="blue"))
+    uvicorn.run(
+        "paw.main:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
+@app.command()
+def version() -> None:
+    """Show PAW version."""
+    from paw import __version__
+    console.print(f"🐾 PAW v{__version__}")
+
+
+def main() -> None:
+    """Entrypoint."""
+    app()
+
+
+if __name__ == "__main__":
+    main()

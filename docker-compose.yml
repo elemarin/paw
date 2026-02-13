@@ -1,0 +1,21 @@
+services:
+  paw:
+    build: .
+    container_name: paw
+    ports:
+      - "8000:8000"
+    volumes:
+      - paw-data:/home/paw/data
+      - paw-plugins:/home/paw/plugins
+      - paw-workspace:/home/paw/workspace
+    env_file:
+      - .env
+    environment:
+      - PAW_LOG_FORMAT=console
+      - OLLAMA_API_BASE=http://host.docker.internal:11434
+    restart: unless-stopped
+
+volumes:
+  paw-data:
+  paw-plugins:
+  paw-workspace:
