@@ -25,7 +25,7 @@ shell:
     - shutdown
     - init
     - mkfs
-  approval_patterns:              # Require user approval
+  approval_patterns:              # Blocked patterns requiring explicit review before use
     - "rm -rf"
     - "dd "
     - "sudo"
@@ -36,7 +36,7 @@ shell:
     - /tmp
 
 # --- Server ---
-host: "0.0.0.0"
+host: "127.0.0.1"
 port: 8000
 log_level: "INFO"
 log_format: "json"               # "json" or "console"

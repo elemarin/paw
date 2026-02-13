@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +24,7 @@ class FileTool(Tool):
             config.data_dir,
             "/tmp",
         ]
+        self._resolved_allowed_dirs = [Path(d).resolve() for d in self._writable_dirs]
 
     @property
     def name(self) -> str:
@@ -68,11 +68,19 @@ class FileTool(Tool):
 
     def _check_writable(self, path: str) -> str | None:
         """Check if a path is in a writable directory. Returns error message or None."""
-        resolved = str(Path(path).resolve())
-        for allowed in self._writable_dirs:
-            if resolved.startswith(str(Path(allowed).resolve())):
+        resolved = Path(path).resolve()
+        for allowed in self._resolved_allowed_dirs:
+            if resolved.is_relative_to(allowed):
                 return None
         return f"Error: Cannot write to '{path}'. Writable dirs: {self._writable_dirs}"
+
+    def _check_access(self, path: str) -> str | None:
+        """Check if a path is in allowed sandbox directories."""
+        resolved = Path(path).resolve()
+        for allowed in self._resolved_allowed_dirs:
+            if resolved.is_relative_to(allowed):
+                return None
+        return f"Error: Access to '{path}' is outside allowed sandbox dirs: {self._writable_dirs}"
 
     async def execute(
         self,
@@ -86,6 +94,9 @@ class FileTool(Tool):
 
         try:
             if action == "read":
+                error = self._check_access(path)
+                if error:
+                    return error
                 if not p.exists():
                     return f"Error: File not found: {path}"
                 if not p.is_file():
@@ -115,6 +126,9 @@ class FileTool(Tool):
                 return f"Appended {len(content)} chars to {path}"
 
             elif action == "list":
+                error = self._check_access(path)
+                if error:
+                    return error
                 if not p.exists():
                     return f"Error: Directory not found: {path}"
                 if not p.is_dir():
@@ -129,6 +143,9 @@ class FileTool(Tool):
                 return result
 
             elif action == "search":
+                error = self._check_access(path)
+                if error:
+                    return error
                 if not p.exists():
                     return f"Error: Directory not found: {path}"
                 matches = list(p.rglob(pattern))[:100]
@@ -138,6 +155,9 @@ class FileTool(Tool):
                 return f"Found {len(matches)} matches:\n" + "\n".join(lines)
 
             elif action == "exists":
+                error = self._check_access(path)
+                if error:
+                    return error
                 if p.exists():
                     kind = "directory" if p.is_dir() else "file"
                     return f"Yes: {path} exists ({kind})"

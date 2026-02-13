@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import shlex
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -54,22 +55,33 @@ class ShellTool(Tool):
         if not self._config.enabled:
             return "Error: Shell tool is disabled."
 
+        resolved_cwd = Path(working_dir).resolve()
+        allowed_cwds = [Path(allowed).resolve() for allowed in self._config.writable_dirs]
+        if not any(resolved_cwd.is_relative_to(allowed) for allowed in allowed_cwds):
+            return f"Error: Working directory '{working_dir}' is outside allowed sandbox paths."
+
+        lowered_command = command.lower()
+
         # Safety: check blocked commands
         for blocked in self._config.blocked_commands:
-            if blocked in command:
+            if blocked.lower() in lowered_command:
                 return f"Error: Command blocked — '{blocked}' is not allowed."
 
-        # Safety: check approval patterns (for now, warn but allow)
+        # Safety: check approval patterns
         for pattern in self._config.approval_patterns:
-            if pattern in command:
+            if pattern.lower() in lowered_command:
                 logger.warning("shell.approval_needed", command=command, pattern=pattern)
-                # In future: queue for approval. For MVP: warn and execute.
+                return f"Error: Command requires approval — pattern '{pattern}' is not allowed."
+
+        args = shlex.split(command)
+        if not args:
+            return "Error: Empty command."
 
         logger.info("shell.execute", command=command, cwd=working_dir)
 
         try:
-            process = await asyncio.create_subprocess_shell(
-                command,
+            process = await asyncio.create_subprocess_exec(
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,
@@ -80,7 +92,7 @@ class ShellTool(Tool):
                     process.communicate(),
                     timeout=self._config.timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 process.kill()
                 return f"Error: Command timed out after {self._config.timeout}s."
 
