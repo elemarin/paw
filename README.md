@@ -154,6 +154,22 @@ Plugins extend the `PawPlugin` base class, receive access to the tool registry a
 paw chat "Create a plugin that fetches weather data"
 ```
 
+### Brave web search plugin
+
+This repo includes `plugins/brave_search`, which adds a `web_search` tool.
+
+Set an API key before starting PAW:
+
+```bash
+PAW_BRAVE_API_KEY=your-brave-api-key
+```
+
+Then ask PAW to search:
+
+```bash
+paw chat "Search the web for the latest FastAPI release notes"
+```
+
 ## Configuration
 
 ### Environment Variables (`.env`)
@@ -162,6 +178,7 @@ paw chat "Create a plugin that fetches weather data"
 PAW_LLM__API_KEY=sk-...          # Your LLM API key
 PAW_LLM__MODEL=openai/gpt-4o-mini  # Model to use
 PAW_API_KEY=change-me-strong-key  # Required for API access
+PAW_BRAVE_API_KEY=...             # Optional: enables Brave web search plugin
 ```
 
 ### Config File (`paw.yaml`)

@@ -1,0 +1,5 @@
+name: brave_search
+description: Search the web using Brave Search API
+version: 0.1.0
+author: PAW
+entry_point: __init__
