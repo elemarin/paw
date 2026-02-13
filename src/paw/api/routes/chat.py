@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from paw.api.middleware.auth import verify_api_key
+from paw.agent.soul import get_system_prompt
 
 logger = structlog.get_logger()
 
@@ -56,10 +57,18 @@ async def chat_completions(
     gateway = request.app.state.gateway
     agent = request.app.state.agent
     conversations = request.app.state.conversations
+    memory_tool = request.app.state.memory_tool
 
     # Get or create conversation
     conv_id = body.conversation_id or str(uuid.uuid4())
     conversation = conversations.get_or_create(conv_id)
+
+    # Refresh the system message with current DB memories
+    fresh_soul = get_system_prompt(config.soul_path, memory_tool=memory_tool)
+    if conversation.messages and conversation.messages[0].role == "system":
+        conversation.messages[0].content = fresh_soul
+    elif not conversation.messages:
+        conversation.add_message("system", fresh_soul)
 
     # Add user message(s)
     for msg in body.messages:
@@ -73,6 +82,9 @@ async def chat_completions(
             temperature=body.temperature,
             max_tokens=body.max_tokens,
         )
+
+        # Persist conversation to DB
+        await conversations.save_conversation(conversation)
 
         return ChatResponse(
             id=f"paw-{uuid.uuid4().hex[:8]}",
@@ -100,6 +112,9 @@ async def chat_completions(
 
         content = response.choices[0].message.content
         conversation.add_message("assistant", content)
+
+        # Persist conversation to DB
+        await conversations.save_conversation(conversation)
 
         return ChatResponse(
             id=f"paw-{uuid.uuid4().hex[:8]}",

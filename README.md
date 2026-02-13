@@ -1,8 +1,20 @@
 # 🐾 PAW — Personal Agent Workspace
 
-A self-hosted AI agent that lives in its own Linux container. CLI-first. Self-building. Model-agnostic.
+```
+                            __
+     ,                    ," e`--o
+    ((                   (  | __,'
+     \\~----------------' \_;/
+     (                      /
+     /) ._______________.  )
+    (( (               (( (
+     ``-'               ``-'
 
-> **Ship the brain, not the body.** PAW is the core intelligence — everything else it builds for itself.
+```
+
+A self-hosted AI agent that lives in its own Linux container. CLI-first. Self-building. Model-agnostic. Sandboxed.
+
+> PAW is the core intelligence — everything else it builds for itself.
 
 ---
 
@@ -12,9 +24,11 @@ PAW is a personal AI agent that:
 
 - **Lives in a full Linux container** — it has shell access, a filesystem, and networking
 - **Uses any LLM** — OpenAI, Anthropic, Google, Ollama, or any provider via [LiteLLM](https://github.com/BerriAI/litellm)
-- **Has tools** — shell execution, file management, persistent memory
-- **Builds itself** — the Coder tool lets PAW create new plugins, features, and improvements
+- **Has tools** — shell execution, file management, persistent memory, self-building
+- **Security-hardened** — sandboxed file access, command blocking, approval patterns, directory restrictions
+- **Dual memory system** — persistent key-value store in SQLite + markdown-based memory files with rolling daily logs
 - **Has identity** — `soul.md` defines who PAW is, what it values, and how it works
+- **Builds itself** — the Coder tool lets PAW scaffold and propose new plugins
 - **Is extensible** — drop-in plugin system for adding new capabilities
 
 ## Quick Start
@@ -92,10 +106,36 @@ curl http://localhost:8000/v1/chat/completions \
 
 | Tool | Description |
 |------|-------------|
-| **shell** | Execute commands in PAW's Linux environment |
-| **files** | Read, write, list, and search files |
-| **memory** | Persistent key-value memory across conversations |
-| **coder** | Create plugins, scripts, and self-improvement proposals |
+| **shell** | Execute commands in PAW's Linux environment — with blocked commands, approval patterns, timeout enforcement, and working-directory sandboxing |
+| **files** | Read, write, list, search, append, delete files — sandboxed to workspace/plugins/data/tmp directories only |
+| **memory** | Persistent key-value memory (SQLite-backed) across conversations — remember, recall, forget, list |
+| **coder** | Create plugins, standalone scripts, and self-improvement proposals — with scaffolding and source introspection |
+
+## Security Hardening
+
+PAW runs inside a container but also enforces at the application layer:
+
+| Layer | What it does |
+|-------|-------------|
+| **File sandboxing** | All file reads and writes are restricted to `workspace/`, `plugins/`, `data/`, and `/tmp`. Path traversal attempts are blocked. |
+| **Shell command blocking** | Commands like `reboot`, `shutdown`, `mkfs` are permanently blocked. |
+| **Approval patterns** | Dangerous patterns (`rm -rf`, `dd`, `sudo`) are flagged and rejected unless explicitly approved. |
+| **Working-dir restriction** | Shell commands can only run with a `cwd` inside allowed writable directories. |
+| **API key auth** | Optional `X-API-Key` header authentication for all API endpoints. |
+| **Token budgets** | Per-request and daily token limits prevent runaway LLM costs. |
+| **Output truncation** | Shell output (10 KB) and file reads (50 KB) are capped to avoid prompt-stuffing. |
+
+## Memory System
+
+PAW has a **dual-layer memory** that persists across conversations:
+
+### Key-Value Store (SQLite)
+The agent can `remember`, `recall`, `forget`, and `list` named memories. Stored in SQLite, loaded into context on startup, and injected into the system prompt so the LLM always has access.
+
+### Markdown Memory Files
+PAW loads `MEMORY.md` (long-term notes) plus the last 3 days of daily logs (`YYYY-MM-DD.md`) from a `memory/` directory. This gives the agent a rolling context window of recent activity without unbounded growth.
+
+Both layers are merged into a `<MEMORY>` block in the system prompt so the LLM can answer from memory without extra tool calls.
 
 ## Plugin System
 
@@ -108,7 +148,7 @@ plugins/
     __init__.py     # PawPlugin subclass
 ```
 
-PAW can also **create its own plugins** using the Coder tool:
+Plugins extend the `PawPlugin` base class, receive access to the tool registry and database, and can register new tools on load. PAW can also **create its own plugins** using the Coder tool:
 
 ```bash
 paw chat "Create a plugin that fetches weather data"
@@ -182,8 +222,10 @@ PAW is built around the idea that an AI agent should be a **digital worker** —
 
 The core is small and focused. Everything else — web UIs, integrations, notification systems — PAW builds as plugins when you ask for them.
 
+Security isn't an afterthought. Every tool enforces sandbox boundaries, dangerous operations require approval, and the agent can never modify its own core code.
+
 **Ship the brain, not the body.**
 
 ---
 
-*Built with ❤️ and a lot of LLM tokens.*
+*Built with ❤️ and a lot of LLM tokens. Mascot: Chips the wiener dog 🌭*

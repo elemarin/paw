@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from paw.config import get_config
 from paw.logging import setup_logging
 from paw.llm.gateway import LLMGateway
-from paw.agent.soul import get_system_prompt
+from paw.agent.soul import get_system_prompt, load_soul
 from paw.agent.loop import AgentLoop
 from paw.agent.conversation import ConversationManager
 from paw.agent.tools import ToolRegistry
@@ -34,9 +34,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     logger.info("paw.starting", version="0.1.0", model=config.llm.model)
 
-    # Load soul
-    soul = get_system_prompt(config.soul_path)
-    logger.info("paw.soul.loaded", length=len(soul))
+    # Load soul (just the base text, full prompt built after memory loads)
+    soul_text = load_soul(config.soul_path)
+    logger.info("paw.soul.loaded", length=len(soul_text))
 
     # Initialize database
     db = Database(config.data_dir)
@@ -49,16 +49,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry = ToolRegistry()
 
     # Register built-in tools
+    memory_tool = MemoryTool(db)
     registry.register(ShellTool(config.shell))
     registry.register(FileTool(config))
-    registry.register(MemoryTool(db))
+    registry.register(memory_tool)
     registry.register(CoderTool(config.workspace_dir, config.plugins_dir))
 
     # Load plugins
     plugin_tools = await load_plugins(config.plugins_dir, registry)
     logger.info("paw.plugins.loaded", count=len(plugin_tools))
 
-    # Initialize conversation manager
+    # Load memories from DB
+    await memory_tool.load_from_db()
+
+    # Initialize conversation manager — rebuild soul with DB memories
+    soul = get_system_prompt(config.soul_path, memory_tool=memory_tool)
     conversations = ConversationManager(db=db, soul=soul)
     await conversations.load_from_db()
 
@@ -78,6 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.conversations = conversations
     app.state.db = db
     app.state.soul = soul
+    app.state.memory_tool = memory_tool
 
     logger.info(
         "paw.ready",
@@ -106,10 +112,12 @@ def create_app() -> FastAPI:
     from paw.api.routes.health import router as health_router
     from paw.api.routes.chat import router as chat_router
     from paw.api.routes.conversations import router as conversations_router
+    from paw.api.routes.memory import router as memory_router
 
     app.include_router(health_router, tags=["health"])
     app.include_router(chat_router, tags=["chat"])
     app.include_router(conversations_router, tags=["conversations"])
+    app.include_router(memory_router, tags=["memory"])
 
     return app
 

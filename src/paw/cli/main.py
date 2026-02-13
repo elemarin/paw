@@ -23,6 +23,9 @@ console = Console()
 
 DEFAULT_URL = "http://localhost:8000"
 
+# File to persist the last conversation ID for --last
+_LAST_CONV_FILE = ".paw_last_conversation"
+
 
 def _get_client(base_url: str, api_key: str | None) -> httpx.Client:
     headers = {}
@@ -31,18 +34,46 @@ def _get_client(base_url: str, api_key: str | None) -> httpx.Client:
     return httpx.Client(base_url=base_url, headers=headers, timeout=120.0)
 
 
+def _save_last_conversation(conv_id: str) -> None:
+    """Persist the last conversation ID so --last can resume it."""
+    try:
+        from pathlib import Path
+        Path(_LAST_CONV_FILE).write_text(conv_id, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _load_last_conversation() -> str | None:
+    """Load the last conversation ID."""
+    try:
+        from pathlib import Path
+        p = Path(_LAST_CONV_FILE)
+        if p.exists():
+            return p.read_text(encoding="utf-8").strip() or None
+    except Exception:
+        pass
+    return None
+
+
 @app.command()
 def chat(
     message: str = typer.Argument(..., help="Message to send to PAW"),
     base_url: str = typer.Option(DEFAULT_URL, "--url", "-u", envvar="PAW_URL"),
     api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
-    conversation_id: str = typer.Option("", "--conversation", "-c", help="Resume a conversation"),
+    conversation_id: str = typer.Option("", "--conversation", "-c", help="Resume a conversation by ID"),
+    last: bool = typer.Option(False, "--last", "-l", help="Continue the last conversation"),
     no_agent: bool = typer.Option(False, "--no-agent", help="Simple proxy mode (no tools)"),
     model: str = typer.Option("", "--model", "-m", help="Override model"),
     raw: bool = typer.Option(False, "--raw", help="Output raw JSON response"),
 ) -> None:
     """Send a message to PAW and get a response."""
     client = _get_client(base_url, api_key or None)
+
+    # Resolve conversation ID
+    if last and not conversation_id:
+        conversation_id = _load_last_conversation() or ""
+        if not conversation_id:
+            console.print("[yellow]No previous conversation found. Starting new one.[/yellow]")
 
     payload: dict = {
         "messages": [{"role": "user", "content": message}],
@@ -72,6 +103,11 @@ def chat(
 
     content = data["choices"][0]["message"]["content"]
     conv_id = data.get("conversation_id", "")
+
+    # Save for --last
+    if conv_id:
+        _save_last_conversation(conv_id)
+
     tools = data.get("tool_calls_made", 0)
 
     # Render the response
@@ -183,34 +219,61 @@ def memory(
     api_key: str = typer.Option("", "--api-key", "-k", envvar="PAW_API_KEY"),
 ) -> None:
     """Manage PAW's persistent memory."""
-    # Memory is managed through the chat interface for now
-    if action == "list":
-        # Use the agent to list memory
-        chat_cmd = "List all your remembered memories using the memory tool."
-    elif action == "get" and key:
-        chat_cmd = f"Recall the memory with key '{key}' using the memory tool."
-    elif action == "set" and key and value:
-        chat_cmd = f"Remember this: key='{key}', value='{value}' using the memory tool."
-    elif action == "delete" and key:
-        chat_cmd = f"Forget the memory with key '{key}' using the memory tool."
-    else:
-        console.print("[red]Usage: paw memory <list|get|set|delete> [key] [value][/red]")
-        raise typer.Exit(1)
-
-    # Delegate to chat
-    console.print(f"[dim]→ {chat_cmd}[/dim]")
-    # Call the chat function programmatically
     client = _get_client(base_url, api_key or None)
+
     try:
-        resp = client.post("/v1/chat/completions", json={
-            "messages": [{"role": "user", "content": chat_cmd}],
-            "agent_mode": True,
-        })
-        resp.raise_for_status()
-        data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        console.print()
-        console.print(Markdown(content))
+        if action == "list":
+            resp = client.get("/v1/memory")
+            resp.raise_for_status()
+            data = resp.json()
+
+            if not data:
+                console.print("[dim]No memories stored.[/dim]")
+                return
+
+            table = Table(title="🧠 Stored Memories", border_style="blue")
+            table.add_column("Key", style="cyan")
+            table.add_column("Value")
+
+            for item in data:
+                table.add_row(item["key"], item["value"])
+
+            console.print()
+            console.print(table)
+            console.print()
+
+        elif action == "get":
+            if not key:
+                console.print("[red]Usage: paw memory get <key>[/red]")
+                raise typer.Exit(1)
+            resp = client.get(f"/v1/memory/{key}")
+            resp.raise_for_status()
+            data = resp.json()
+            if "error" in data:
+                console.print(f"[yellow]No memory found for key '{key}'[/yellow]")
+            else:
+                console.print(f"[cyan]{data['key']}[/cyan] = {data['value']}")
+
+        elif action == "set":
+            if not key or not value:
+                console.print("[red]Usage: paw memory set <key> <value>[/red]")
+                raise typer.Exit(1)
+            resp = client.put("/v1/memory", json={"key": key, "value": value})
+            resp.raise_for_status()
+            console.print(f"[green]✓[/green] Remembered: {key} = {value}")
+
+        elif action == "delete":
+            if not key:
+                console.print("[red]Usage: paw memory delete <key>[/red]")
+                raise typer.Exit(1)
+            resp = client.delete(f"/v1/memory/{key}")
+            resp.raise_for_status()
+            console.print(f"[green]✓[/green] Forgot: {key}")
+
+        else:
+            console.print("[red]Unknown action. Use: list, get, set, delete[/red]")
+            raise typer.Exit(1)
+
     except httpx.ConnectError:
         console.print(f"[red]✗[/red] PAW is not running at {base_url}")
         raise typer.Exit(1)

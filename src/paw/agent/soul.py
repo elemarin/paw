@@ -4,83 +4,51 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from paw.agent.memory import MemoryTool
 
 logger = structlog.get_logger()
 
 _DEFAULT_SOUL = """You are PAW, a personal agent workspace. You are a helpful, direct, and capable AI assistant that can execute shell commands, manage files, and build plugins to extend your own capabilities. Be concise and action-oriented."""
 
-_MEMORY_SYSTEM_INSTRUCTIONS = """===========================
-MEMORY SYSTEM (STAGE 1)
+_MEMORY_SYSTEM_INSTRUCTIONS = """
+===========================
+MEMORY SYSTEM
 ===========================
 
-All memory is stored as Markdown files in ./memory/
+You have a persistent key-value memory that survives across conversations.
+Use the "memory" TOOL (via function calling) to store and retrieve information.
 
-- Long-term memory file:
-  ./memory/MEMORY.md
+Available memory actions (pass these as the "action" argument):
+- remember: Store a key-value pair. Requires "key" and "value".
+- recall:   Retrieve a stored value by key.
+- list:     Show all stored memory keys and values.
+- forget:   Delete a stored memory by key.
 
-- Daily logs:
-  ./memory/YYYY-MM-DD.md
+WHEN TO USE MEMORY:
+- The user says "remember this" or similar
+- The user gives a name, preference, identity, or stable fact
+- A decision or commitment is made that should persist
+- You want to store something that will matter in future conversations
 
-On startup, the host application will load:
-- MEMORY.md
-- Today’s log
-- Yesterday’s log
-- The day before yesterday’s log
-
-This memory will be injected into your context as:
-<MEMORY>
-...content...
-</MEMORY>
-
-You must use this memory when relevant.
-
-===========================
-WHEN TO WRITE MEMORY
-===========================
-
-You write memory when:
-- The user explicitly says “remember this”
-- The user gives a stable preference, identity, or fact
-- A decision or commitment is made
-- You detect something that will matter later
-- You want to append something to today’s log
-
-To write memory, output ONLY a JSON object:
-
-{
-  "action": "write_memory",
-  "type": "daily" | "fact",
-  "content": "text to append"
-}
-
-No explanations inside the JSON.
-
-The host will intercept this JSON and append it to the correct .md file.
-
-===========================
-TOOL CALLS
-===========================
-
-When you need to call a tool, output:
-
-{
-  "action": "tool",
-  "name": "tool_name",
-  "args": { ... }
-}
+IMPORTANT:
+- Always use the memory tool via function calling. Never output raw JSON.
+- When you have stored memories in context below, USE them to answer questions.
+- If the user asks "what's my name?" and you see it in memory, answer directly.
+- Proactively use memory when it's relevant to the conversation.
 
 ===========================
 BEHAVIOR RULES
 ===========================
 
 - Keep user-facing answers clean and helpful.
-- Use memory when relevant.
-- Write memory when appropriate.
-- If unsure, think step-by-step until you reach a decision.
-- Never include reasoning inside JSON blocks.
-- Never break JSON formatting."""
+- Use memory when relevant — answer from memory before asking the user.
+- Store to memory proactively when the user shares persistent information.
+- If unsure, think step-by-step until you reach a decision."""
 
 
 def load_soul(soul_path: str | Path) -> str:
@@ -127,19 +95,34 @@ def load_markdown_memory(memory_dir: str | Path = "memory", now: datetime | None
     return memory_context
 
 
+def format_db_memories(memory_tool: MemoryTool) -> str:
+    """Format in-memory key-value store as text for the system prompt."""
+    if not memory_tool._store:
+        return ""
+    lines = [f"- {k}: {v}" for k, v in memory_tool._store.items()]
+    return "Stored memories:\n" + "\n".join(lines)
+
+
 def get_system_prompt(
     soul_path: str | Path,
     extra_context: str | None = None,
     memory_dir: str | Path = "memory",
+    memory_tool: MemoryTool | None = None,
 ) -> str:
-    """Build the full system prompt from soul.md + memory context + optional extra context."""
+    """Build the full system prompt from soul.md + memory instructions + stored memories."""
     soul = load_soul(soul_path)
-    memory = load_markdown_memory(memory_dir)
+    md_memory = load_markdown_memory(memory_dir)
+
     parts = [
         soul,
         _MEMORY_SYSTEM_INSTRUCTIONS,
-        f"<MEMORY>\n{memory}\n</MEMORY>",
     ]
+
+    # Inject stored DB memories so the LLM can see them
+    db_memories = format_db_memories(memory_tool) if memory_tool else ""
+    all_memory = "\n\n".join(filter(None, [md_memory, db_memories]))
+    if all_memory:
+        parts.append(f"\n<MEMORY>\n{all_memory}\n</MEMORY>")
 
     if extra_context:
         parts.append(f"\n\n---\n\n{extra_context}")
