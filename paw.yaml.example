@@ -40,3 +40,17 @@ host: "127.0.0.1"
 port: 8000
 log_level: "INFO"
 log_format: "json"               # "json" or "console"
+
+# --- Channels ---
+channels:
+  telegram:
+    enabled: false
+    mode: "polling"               # "polling" or "webhook" (webhook planned next phase)
+    dm_policy: "allowlist"        # "allowlist" | "open" | "disabled"
+    allow_from: []                 # Telegram user IDs as strings, e.g. ["12345678"]
+    groups_enabled: false
+    require_mention: true
+    agent_mode: true
+    poll_timeout_s: 25
+    retry_delay_s: 3
+    max_message_chars: 3500

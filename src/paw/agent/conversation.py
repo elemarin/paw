@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import structlog
@@ -18,7 +19,7 @@ class Message:
 
     role: str
     content: str
-    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
     tool_calls: list[dict[str, Any]] | None = None
     tool_call_id: str | None = None
 
@@ -38,7 +39,7 @@ class Conversation:
 
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
     messages: list[Message] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     title: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -54,7 +55,36 @@ class Conversation:
 
     def to_messages(self) -> list[dict[str, Any]]:
         """Convert all messages to OpenAI format."""
-        return [m.to_dict() for m in self.messages]
+        normalized: list[dict[str, Any]] = []
+        valid_tool_call_ids: set[str] = set()
+
+        for msg in self.messages:
+            raw = msg.to_dict()
+            role = raw.get("role")
+
+            if role == "assistant":
+                tool_calls = raw.get("tool_calls")
+                if isinstance(tool_calls, list):
+                    for tool_call in tool_calls:
+                        if not isinstance(tool_call, dict):
+                            continue
+                        tool_call_id = tool_call.get("id")
+                        if isinstance(tool_call_id, str) and tool_call_id:
+                            valid_tool_call_ids.add(tool_call_id)
+                normalized.append(raw)
+                continue
+
+            if role == "tool":
+                tool_call_id = raw.get("tool_call_id")
+                if isinstance(tool_call_id, str) and tool_call_id in valid_tool_call_ids:
+                    normalized.append(raw)
+                else:
+                    logger.warning("conversation.drop_orphan_tool_message", conversation_id=self.id)
+                continue
+
+            normalized.append(raw)
+
+        return normalized
 
     @property
     def last_user_message(self) -> str | None:
@@ -126,13 +156,29 @@ class ConversationManager:
                 )
                 # Load messages
                 msg_rows = await self._db.fetch_all(
-                    "SELECT role, content, timestamp FROM messages WHERE conversation_id = ? ORDER BY timestamp",
+                    "SELECT role, content, tool_calls, tool_call_id, timestamp "
+                    "FROM messages WHERE conversation_id = ? ORDER BY timestamp",
                     (row["id"],),
                 )
                 for mr in msg_rows:
+                    tool_calls = None
+                    raw_tool_calls = mr.get("tool_calls")
+                    if raw_tool_calls:
+                        try:
+                            parsed = json.loads(raw_tool_calls)
+                            if isinstance(parsed, list):
+                                tool_calls = parsed
+                        except json.JSONDecodeError:
+                            logger.warning(
+                                "conversation.invalid_tool_calls_json",
+                                conversation_id=row["id"],
+                            )
+
                     conv.messages.append(Message(
                         role=mr["role"],
                         content=mr["content"],
+                        tool_calls=tool_calls,
+                        tool_call_id=mr.get("tool_call_id"),
                         timestamp=datetime.fromisoformat(mr["timestamp"]),
                     ))
                 self._conversations[conv.id] = conv
@@ -155,10 +201,23 @@ class ConversationManager:
                 "DELETE FROM messages WHERE conversation_id = ?", (conv.id,)
             )
             for msg in conv.messages:
+                serialized_tool_calls = None
+                if msg.tool_calls:
+                    serialized_tool_calls = json.dumps(msg.tool_calls)
+
                 await self._db.execute(
-                    """INSERT INTO messages (conversation_id, role, content, timestamp)
-                       VALUES (?, ?, ?, ?)""",
-                    (conv.id, msg.role, msg.content, msg.timestamp.isoformat()),
+                    """INSERT INTO messages (
+                       conversation_id, role, content, tool_calls, tool_call_id, timestamp
+                    )
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (
+                        conv.id,
+                        msg.role,
+                        msg.content,
+                        serialized_tool_calls,
+                        msg.tool_call_id,
+                        msg.timestamp.isoformat(),
+                    ),
                 )
         except Exception as e:
             logger.error("conversation.save_failed", id=conv.id, error=str(e))

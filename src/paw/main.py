@@ -2,26 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 import structlog
 import uvicorn
 from fastapi import FastAPI
 
-from paw.config import get_config
-from paw.logging import setup_logging
-from paw.llm.gateway import LLMGateway
-from paw.agent.soul import get_system_prompt, load_soul
-from paw.agent.loop import AgentLoop
 from paw.agent.conversation import ConversationManager
-from paw.agent.tools import ToolRegistry
-from paw.tools.shell import ShellTool
-from paw.tools.files import FileTool
+from paw.agent.loop import AgentLoop
 from paw.agent.memory import MemoryTool
+from paw.agent.soul import get_system_prompt, load_soul
+from paw.agent.tools import ToolRegistry
+from paw.channels.base import ChannelInboundEvent
+from paw.channels.manager import ChannelRuntimeManager
+from paw.channels.router import ChannelRouter
 from paw.coder.engine import CoderTool
-from paw.extensions.loader import load_plugins
+from paw.config import get_config
 from paw.db.engine import Database
+from paw.extensions.loader import load_plugins
+from paw.llm.gateway import LLMGateway
+from paw.logging import setup_logging
+from paw.tools.files import FileTool
+from paw.tools.shell import ShellTool
 
 logger = structlog.get_logger()
 
@@ -75,6 +78,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         soul=soul,
     )
 
+    channel_router = ChannelRouter(db)
+
+    async def handle_channel_inbound(event: ChannelInboundEvent) -> str:
+        conv_id = await channel_router.resolve_conversation_id(event.channel, event.session_key)
+        conversation = conversations.get_or_create(conv_id)
+
+        fresh_soul = get_system_prompt(config.soul_path, memory_tool=memory_tool)
+        if conversation.messages and conversation.messages[0].role == "system":
+            conversation.messages[0].content = fresh_soul
+        elif not conversation.messages:
+            conversation.add_message("system", fresh_soul)
+
+        conversation.add_message("user", event.text)
+
+        if event.agent_mode:
+            result = await agent.run(
+                conversation=conversation,
+                model=event.model,
+                temperature=None,
+                max_tokens=None,
+            )
+            await conversations.save_conversation(conversation)
+            return result.response
+
+        messages = [{"role": m.role, "content": m.content} for m in conversation.messages]
+        response = await gateway.completion(
+            messages=messages,
+            model=event.model,
+            temperature=None,
+            max_tokens=None,
+        )
+        content = response.choices[0].message.content or ""
+        conversation.add_message("assistant", content)
+        await conversations.save_conversation(conversation)
+        return content
+
+    channel_manager = ChannelRuntimeManager(
+        config=config,
+        db=db,
+        inbound_handler=handle_channel_inbound,
+    )
+    await channel_manager.start()
+
     # Store on app state
     app.state.config = config
     app.state.gateway = gateway
@@ -84,6 +130,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.db = db
     app.state.soul = soul
     app.state.memory_tool = memory_tool
+    app.state.channel_router = channel_router
+    app.state.channel_manager = channel_manager
 
     logger.info(
         "paw.ready",
@@ -95,6 +143,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     logger.info("paw.shutting_down")
+    await channel_manager.stop()
     await db.close()
     logger.info("paw.stopped")
 
@@ -109,9 +158,9 @@ def create_app() -> FastAPI:
     )
 
     # Register routes
-    from paw.api.routes.health import router as health_router
     from paw.api.routes.chat import router as chat_router
     from paw.api.routes.conversations import router as conversations_router
+    from paw.api.routes.health import router as health_router
     from paw.api.routes.memory import router as memory_router
 
     app.include_router(health_router, tags=["health"])

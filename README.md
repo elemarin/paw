@@ -168,6 +168,37 @@ PAW_API_KEY=change-me-strong-key  # Required for API access
 
 See [paw.yaml.example](paw.yaml.example) for all options.
 
+## Telegram Channel (Core)
+
+PAW includes a first-class Telegram channel runtime (OpenClaw-style architecture, polling-first).
+
+### 1. Create bot token
+
+- Open Telegram and message `@BotFather`
+- Run `/newbot` and copy the token
+
+### 2. Configure `.env`
+
+```bash
+PAW_TELEGRAM_ENABLED=true
+PAW_TELEGRAM_BOT_TOKEN=123456789:your-token
+PAW_TELEGRAM_MODE=polling
+
+# Recommended for safety in production
+PAW_TELEGRAM_DM_POLICY=allowlist
+PAW_TELEGRAM_ALLOW_FROM=12345678
+```
+
+### 3. Restart PAW
+
+```bash
+docker compose up -d --build
+```
+
+### 4. Verify health
+
+`GET /health` now includes a `channels` section with Telegram runtime state (`enabled`, `running`, `last_error`, timestamps).
+
 ## Development
 
 ```bash

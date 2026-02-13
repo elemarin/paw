@@ -16,6 +16,22 @@ async def health(request: Request) -> dict:
     """Health check — returns status, uptime, model info."""
     config = request.app.state.config
     gateway = request.app.state.gateway
+    channel_manager = getattr(request.app.state, "channel_manager", None)
+
+    channels: list[dict] = []
+    if channel_manager:
+        channels = [
+            {
+                "channel": status.channel,
+                "mode": status.mode,
+                "enabled": status.enabled,
+                "running": status.running,
+                "last_error": status.last_error,
+                "last_inbound_at": status.last_inbound_at,
+                "last_outbound_at": status.last_outbound_at,
+            }
+            for status in channel_manager.statuses()
+        ]
 
     return {
         "status": "ok",
@@ -24,4 +40,5 @@ async def health(request: Request) -> dict:
         "model": config.llm.model,
         "llm_stats": gateway.stats,
         "plugins_loaded": len(getattr(request.app.state, "registry", {}).tools if hasattr(request.app.state, "registry") else []),
+        "channels": channels,
     }

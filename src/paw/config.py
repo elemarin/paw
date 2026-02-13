@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -49,7 +49,11 @@ class LLMConfig(BaseSettings):
 class AgentConfig(BaseSettings):
     """Agent behavior configuration."""
 
-    max_iterations: int = Field(default=10, gt=0, description="Max ReAct loop iterations per request")
+    max_iterations: int = Field(
+        default=10,
+        gt=0,
+        description="Max ReAct loop iterations per request",
+    )
     max_tool_calls: int = Field(default=20, gt=0, description="Max tool calls per request")
     token_budget: int = Field(default=100_000, gt=0, description="Max tokens per request")
     daily_token_budget: int = Field(default=1_000_000, gt=0, description="Daily token limit")
@@ -82,6 +86,42 @@ class ShellConfig(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PAW_SHELL_")
 
 
+class TelegramChannelConfig(BaseSettings):
+    """Telegram channel configuration."""
+
+    enabled: bool = False
+    bot_token: str = Field(default="", description="Telegram bot token")
+    mode: Literal["polling", "webhook"] = "polling"
+
+    webhook_url: str | None = None
+    webhook_secret: str | None = None
+    webhook_path: str = "/telegram-webhook"
+    webhook_host: str = "127.0.0.1"
+    webhook_port: int = Field(default=8787, ge=1, le=65535)
+
+    gateway_url: str = "http://127.0.0.1:8000/v1/chat/completions"
+    api_key: str | None = None
+    model: str | None = None
+    agent_mode: bool = True
+
+    dm_policy: Literal["allowlist", "open", "disabled"] = "allowlist"
+    allow_from: list[str] = Field(default_factory=list)
+    groups_enabled: bool = False
+    require_mention: bool = True
+
+    poll_timeout_s: int = Field(default=25, ge=1, le=60)
+    retry_delay_s: int = Field(default=3, ge=1, le=30)
+    max_message_chars: int = Field(default=3500, ge=200, le=4000)
+
+    model_config = SettingsConfigDict(env_prefix="PAW_TELEGRAM_")
+
+
+class ChannelsConfig(BaseModel):
+    """Top-level channels configuration."""
+
+    telegram: TelegramChannelConfig = Field(default_factory=TelegramChannelConfig)
+
+
 class PawConfig(BaseSettings):
     """Root PAW configuration."""
 
@@ -102,6 +142,7 @@ class PawConfig(BaseSettings):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     agent: AgentConfig = Field(default_factory=AgentConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
+    channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
 
     # Logging
     log_level: str = Field(default="INFO")
@@ -121,6 +162,7 @@ class PawConfig(BaseSettings):
         llm_data = yaml_cfg.pop("llm", {})
         agent_data = yaml_cfg.pop("agent", {})
         shell_data = yaml_cfg.pop("shell", {})
+        channels_data = yaml_cfg.pop("channels", {})
 
         # Only pass YAML sub-configs if they have data;
         # otherwise let pydantic-settings pick up env vars
@@ -131,6 +173,8 @@ class PawConfig(BaseSettings):
             kwargs["agent"] = AgentConfig(**agent_data)
         if shell_data:
             kwargs["shell"] = ShellConfig(**shell_data)
+        if channels_data:
+            kwargs["channels"] = ChannelsConfig(**channels_data)
 
         return cls(**kwargs)
 
