@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from paw.config import get_config
 from paw.logging import setup_logging
 from paw.llm.gateway import LLMGateway
-from paw.agent.soul import load_soul
+from paw.agent.soul import get_system_prompt
 from paw.agent.loop import AgentLoop
 from paw.agent.conversation import ConversationManager
 from paw.agent.tools import ToolRegistry
@@ -35,7 +35,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("paw.starting", version="0.1.0", model=config.llm.model)
 
     # Load soul
-    soul = load_soul(config.soul_path)
+    soul = get_system_prompt(config.soul_path)
     logger.info("paw.soul.loaded", length=len(soul))
 
     # Initialize database
