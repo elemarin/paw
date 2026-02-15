@@ -61,6 +61,78 @@ var managedEnvironmentName = '${namePrefix}-env'
 var dataShareName = 'paw-data'
 var pluginsShareName = 'paw-plugins'
 var workspaceShareName = 'paw-workspace'
+var containerSecrets = concat(
+  [
+    {
+      name: 'acr-password'
+      value: acr.listCredentials().passwords[0].value
+    }
+    {
+      name: 'paw-llm-api-key'
+      value: llmApiKey
+    }
+    {
+      name: 'paw-telegram-bot-token'
+      value: telegramBotToken
+    }
+  ],
+  empty(pawApiKey)
+    ? []
+    : [
+        {
+          name: 'paw-api-key'
+          value: pawApiKey
+        }
+      ]
+)
+var containerEnv = concat(
+  [
+    {
+      name: 'PAW_HOST'
+      value: '0.0.0.0'
+    }
+    {
+      name: 'PAW_PORT'
+      value: '8000'
+    }
+    {
+      name: 'PAW_LOG_FORMAT'
+      value: 'console'
+    }
+    {
+      name: 'PAW_LLM__MODEL'
+      value: model
+    }
+    {
+      name: 'PAW_LLM__SMART_MODEL'
+      value: smartModel
+    }
+    {
+      name: 'PAW_TELEGRAM_ENABLED'
+      value: '${telegramEnabled}'
+    }
+    {
+      name: 'OLLAMA_API_BASE'
+      value: ollamaApiBase
+    }
+    {
+      name: 'PAW_LLM__API_KEY'
+      secretRef: 'paw-llm-api-key'
+    }
+    {
+      name: 'PAW_TELEGRAM_BOT_TOKEN'
+      secretRef: 'paw-telegram-bot-token'
+    }
+  ],
+  empty(pawApiKey)
+    ? []
+    : [
+        {
+          name: 'PAW_API_KEY'
+          secretRef: 'paw-api-key'
+        }
+      ]
+)
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   name: logAnalyticsName
@@ -187,24 +259,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8000
         transport: 'auto'
       }
-      secrets: [
-        {
-          name: 'acr-password'
-          value: acr.listCredentials().passwords[0].value
-        }
-        {
-          name: 'paw-llm-api-key'
-          value: llmApiKey
-        }
-        {
-          name: 'paw-api-key'
-          value: pawApiKey
-        }
-        {
-          name: 'paw-telegram-bot-token'
-          value: telegramBotToken
-        }
-      ]
+      secrets: containerSecrets
       registries: [
         {
           server: acr.properties.loginServer
@@ -222,48 +277,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: cpu
             memory: memory
           }
-          env: [
-            {
-              name: 'PAW_HOST'
-              value: '0.0.0.0'
-            }
-            {
-              name: 'PAW_PORT'
-              value: '8000'
-            }
-            {
-              name: 'PAW_LOG_FORMAT'
-              value: 'console'
-            }
-            {
-              name: 'PAW_LLM__MODEL'
-              value: model
-            }
-            {
-              name: 'PAW_LLM__SMART_MODEL'
-              value: smartModel
-            }
-            {
-              name: 'PAW_TELEGRAM_ENABLED'
-              value: '${telegramEnabled}'
-            }
-            {
-              name: 'OLLAMA_API_BASE'
-              value: ollamaApiBase
-            }
-            {
-              name: 'PAW_LLM__API_KEY'
-              secretRef: 'paw-llm-api-key'
-            }
-            {
-              name: 'PAW_API_KEY'
-              secretRef: 'paw-api-key'
-            }
-            {
-              name: 'PAW_TELEGRAM_BOT_TOKEN'
-              secretRef: 'paw-telegram-bot-token'
-            }
-          ]
+          env: containerEnv
           volumeMounts: [
             {
               volumeName: 'data'
@@ -323,11 +337,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       ]
     }
   }
-  dependsOn: [
-    envStorageData
-    envStoragePlugins
-    envStorageWorkspace
-  ]
 }
 
 output acrName string = acr.name
