@@ -26,7 +26,7 @@ PAW is a personal AI agent that:
 - **Uses any LLM** — OpenAI, Anthropic, Google, Ollama, or any provider via [LiteLLM](https://github.com/BerriAI/litellm)
 - **Has tools** — shell execution, file management, persistent memory, self-building
 - **Security-hardened** — sandboxed file access, command blocking, approval patterns, directory restrictions
-- **Dual memory system** — persistent key-value store in SQLite + markdown-based memory files with rolling daily logs
+- **Dual memory system** — persistent key-value store powered by MemSearch + markdown-based memory files with rolling daily logs
 - **Has identity** — `soul.md` defines who PAW is, what it values, and how it works
 - **Builds itself** — the Coder tool lets PAW scaffold and propose new plugins
 - **Is extensible** — drop-in plugin system for adding new capabilities
@@ -108,7 +108,7 @@ curl http://localhost:8000/v1/chat/completions \
 |------|-------------|
 | **shell** | Execute commands in PAW's Linux environment — with blocked commands, approval patterns, timeout enforcement, and working-directory sandboxing |
 | **files** | Read, write, list, search, append, delete files — sandboxed to workspace/plugins/data/tmp directories only |
-| **memory** | Persistent key-value memory (SQLite-backed) across conversations — remember, recall, forget, list |
+| **memory** | Persistent key-value memory (MemSearch-backed) across conversations — remember, recall, forget, list |
 | **coder** | Create plugins, standalone scripts, and self-improvement proposals — with scaffolding and source introspection |
 
 ## Security Hardening
@@ -129,8 +129,8 @@ PAW runs inside a container but also enforces at the application layer:
 
 PAW has a **dual-layer memory** that persists across conversations:
 
-### Key-Value Store (SQLite)
-The agent can `remember`, `recall`, `forget`, and `list` named memories. Stored in SQLite, loaded into context on startup, and injected into the system prompt so the LLM always has access.
+### Key-Value Store (MemSearch)
+The agent can `remember`, `recall`, `forget`, and `list` named memories. Stored via MemSearch, loaded into context on startup, and injected into the system prompt so the LLM always has access.
 
 ### Markdown Memory Files
 PAW loads `MEMORY.md` (long-term notes) plus the last 3 days of daily logs (`YYYY-MM-DD.md`) from a `memory/` directory. This gives the agent a rolling context window of recent activity without unbounded growth.
