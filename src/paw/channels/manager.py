@@ -32,6 +32,8 @@ class ChannelRuntimeManager:
             config=self.config.channels.telegram,
             db=self.db,
             inbound_handler=self.inbound_handler,
+            default_model=self.config.llm.model,
+            default_smart_model=self.config.llm.smart_model,
         )
         self.providers.append(telegram)
 

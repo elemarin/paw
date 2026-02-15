@@ -86,6 +86,14 @@ CREATE TABLE IF NOT EXISTS channel_sessions (
     PRIMARY KEY (channel, session_key)
 );
 
+CREATE TABLE IF NOT EXISTS channel_session_modes (
+    channel TEXT NOT NULL,
+    session_key TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (channel, session_key)
+);
+
 CREATE TABLE IF NOT EXISTS channel_runtime (
     channel TEXT NOT NULL,
     account_id TEXT NOT NULL DEFAULT 'default',
@@ -344,4 +352,24 @@ class Database:
             """SELECT channel, account_id, mode, running, last_error,
                       last_inbound_at, last_outbound_at, updated_at
                FROM channel_runtime ORDER BY channel, account_id"""
+        )
+
+    async def channel_session_mode_get(self, channel: str, session_key: str) -> str | None:
+        """Get selected mode for a channel session key."""
+        row = await self.fetch_one(
+            "SELECT mode FROM channel_session_modes WHERE channel = ? AND session_key = ?",
+            (channel, session_key),
+        )
+        return row["mode"] if row else None
+
+    async def channel_session_mode_set(self, channel: str, session_key: str, mode: str) -> None:
+        """Set selected mode for a channel session key."""
+        from datetime import datetime
+
+        now = datetime.now(UTC).isoformat()
+        await self.execute(
+            """INSERT OR REPLACE INTO channel_session_modes
+                    (channel, session_key, mode, updated_at)
+               VALUES (?, ?, ?, ?)""",
+            (channel, session_key, mode, now),
         )

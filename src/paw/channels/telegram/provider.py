@@ -15,6 +15,9 @@ from paw.db.engine import Database
 
 logger = structlog.get_logger()
 
+REGULAR_MODE = "regular"
+SMART_MODE = "smart"
+
 
 class TelegramChannelProvider(ChannelProvider):
     def __init__(
@@ -23,10 +26,14 @@ class TelegramChannelProvider(ChannelProvider):
         config: TelegramChannelConfig,
         db: Database,
         inbound_handler,
+        default_model: str,
+        default_smart_model: str,
     ) -> None:
         self.config = config
         self.db = db
         self.inbound_handler = inbound_handler
+        self._regular_model = (self.config.model or default_model).strip()
+        self._smart_model = (self.config.smart_model or default_smart_model).strip()
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -98,6 +105,7 @@ class TelegramChannelProvider(ChannelProvider):
 
         async with httpx.AsyncClient(timeout=timeout) as client:
             await self._load_bot_identity(client, api_base)
+            await self._register_bot_commands(client, api_base)
 
             while not self._stop_event.is_set():
                 try:
@@ -119,6 +127,23 @@ class TelegramChannelProvider(ChannelProvider):
         username = result.get("username")
         if isinstance(username, str) and username.strip():
             self._bot_username = username.strip().lower()
+
+    async def _register_bot_commands(self, client: httpx.AsyncClient, api_base: str) -> None:
+        resp = await client.post(
+            f"{api_base}/setMyCommands",
+            json={
+                "commands": [
+                    {"command": "mode", "description": "Toggle mode: regular/smart"},
+                    {"command": "status", "description": "Show current model mode"},
+                ]
+            },
+        )
+        if resp.status_code >= 400:
+            logger.warning(
+                "channels.telegram.set_commands_failed",
+                status_code=resp.status_code,
+                body=resp.text[:300],
+            )
 
     async def _get_updates(self, client: httpx.AsyncClient, api_base: str) -> list[dict[str, Any]]:
         resp = await client.get(
@@ -163,6 +188,7 @@ class TelegramChannelProvider(ChannelProvider):
         chat_id = chat.get("id")
         if chat_id is None:
             return
+
         chat_type = str(chat.get("type") or "private")
         text = (message.get("text") or "").strip()
         if not text:
@@ -174,6 +200,8 @@ class TelegramChannelProvider(ChannelProvider):
 
         sender = message.get("from") or {}
         sender_id = str(sender.get("id") or "")
+        thread_id = message.get("message_thread_id")
+        session_key = self._session_key(chat_id=chat_id, chat_type=chat_type, thread_id=thread_id)
 
         if not self._allowed_sender(sender_id=sender_id, chat_type=chat_type):
             logger.info(
@@ -188,24 +216,51 @@ class TelegramChannelProvider(ChannelProvider):
                 await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
             return
 
-        if chat_type != "private":
-            if not self.config.groups_enabled:
-                logger.info(
-                    "channels.telegram.message_blocked",
-                    reason="groups_disabled",
-                    chat_type=chat_type,
-                )
-                return
-            if self.config.require_mention and not self._has_bot_mention(text):
-                logger.info(
-                    "channels.telegram.message_blocked",
-                    reason="mention_required",
-                    chat_type=chat_type,
-                )
+        if chat_type != "private" and not self.config.groups_enabled:
+            logger.info(
+                "channels.telegram.message_blocked",
+                reason="groups_disabled",
+                chat_type=chat_type,
+            )
+            if isinstance(update_id, int):
+                self._offset = max(self._offset, update_id + 1)
+                await self.db.channel_offset_set("telegram", self._offset)
+                await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
+            return
+
+        command = self._parse_command(text)
+        if command is not None:
+            command_name, command_arg = command
+            handled, command_reply = await self._handle_command(
+                command_name=command_name,
+                command_arg=command_arg,
+                session_key=session_key,
+            )
+            if handled:
+                self._set_status(last_inbound_at=self._now_iso())
+                await self._send_reply(client, api_base, chat_id, command_reply, thread_id)
+                self._set_status(last_outbound_at=self._now_iso())
+                if isinstance(update_id, int):
+                    self._offset = max(self._offset, update_id + 1)
+                    await self.db.channel_offset_set("telegram", self._offset)
+                    await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
                 return
 
-        thread_id = message.get("message_thread_id")
-        session_key = self._session_key(chat_id=chat_id, chat_type=chat_type, thread_id=thread_id)
+        if chat_type != "private" and self.config.require_mention and not self._has_bot_mention(text):
+            logger.info(
+                "channels.telegram.message_blocked",
+                reason="mention_required",
+                chat_type=chat_type,
+            )
+            if isinstance(update_id, int):
+                self._offset = max(self._offset, update_id + 1)
+                await self.db.channel_offset_set("telegram", self._offset)
+                await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
+            return
+
+        stored_mode = await self.db.channel_session_mode_get("telegram", session_key)
+        selected_mode = stored_mode if stored_mode in {REGULAR_MODE, SMART_MODE} else REGULAR_MODE
+        selected_model = self._smart_model if selected_mode == SMART_MODE else self._regular_model
 
         inbound = ChannelInboundEvent(
             channel="telegram",
@@ -220,7 +275,7 @@ class TelegramChannelProvider(ChannelProvider):
             ),
             update_id=str(update_id) if update_id is not None else None,
             text=text,
-            model=self.config.model,
+            model=selected_model,
             agent_mode=self.config.agent_mode,
         )
 
@@ -296,6 +351,68 @@ class TelegramChannelProvider(ChannelProvider):
             chunks.append(content[start:end])
             start = end
         return chunks
+
+    def _parse_command(self, text: str) -> tuple[str, str] | None:
+        content = (text or "").strip()
+        if not content.startswith("/"):
+            return None
+
+        first_token, _, remainder = content.partition(" ")
+        if len(first_token) <= 1:
+            return None
+
+        command_token = first_token[1:]
+        command_name, _, mention_name = command_token.partition("@")
+        normalized_command = command_name.strip().lower()
+        if not normalized_command:
+            return None
+
+        if mention_name:
+            mention = mention_name.strip().lower()
+            if not self._bot_username or mention != self._bot_username:
+                return None
+
+        return normalized_command, remainder.strip().lower()
+
+    async def _handle_command(
+        self,
+        *,
+        command_name: str,
+        command_arg: str,
+        session_key: str,
+    ) -> tuple[bool, str]:
+        if command_name == "status":
+            stored_mode = await self.db.channel_session_mode_get("telegram", session_key)
+            selected_mode = stored_mode if stored_mode in {REGULAR_MODE, SMART_MODE} else REGULAR_MODE
+            selected_model = self._smart_model if selected_mode == SMART_MODE else self._regular_model
+            return (
+                True,
+                (
+                    f"Mode: {selected_mode}\n"
+                    f"Current model: {selected_model}\n"
+                    f"Regular model: {self._regular_model}\n"
+                    f"Smart model: {self._smart_model}"
+                ),
+            )
+
+        if command_name != "mode":
+            return False, ""
+
+        stored_mode = await self.db.channel_session_mode_get("telegram", session_key)
+        current_mode = stored_mode if stored_mode in {REGULAR_MODE, SMART_MODE} else REGULAR_MODE
+
+        if command_arg in {"", "toggle", "switch"}:
+            new_mode = SMART_MODE if current_mode == REGULAR_MODE else REGULAR_MODE
+        elif command_arg in {"regular", "normal", "default"}:
+            new_mode = REGULAR_MODE
+        elif command_arg in {"smart", "think", "thinking"}:
+            new_mode = SMART_MODE
+        else:
+            return True, "Usage: /mode [regular|smart|toggle]"
+
+        await self.db.channel_session_mode_set("telegram", session_key, new_mode)
+        active_model = self._smart_model if new_mode == SMART_MODE else self._regular_model
+        return True, f"Mode switched to {new_mode}. Active model: {active_model}"
 
     def _set_status(
         self,

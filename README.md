@@ -62,6 +62,9 @@ paw status
 
 # Use specific model
 paw chat "Explain quantum computing" --model anthropic/claude-sonnet-4-20250514
+
+# Use smart model globally
+paw chat "Think carefully about this architecture" --smart
 ```
 
 ### 4. Or use the API directly
@@ -71,7 +74,8 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [{"role": "user", "content": "Hello!"}],
-    "agent_mode": true
+    "agent_mode": true,
+    "smart_mode": true
   }'
 ```
 
@@ -177,6 +181,7 @@ paw chat "Search the web for the latest FastAPI release notes"
 ```bash
 PAW_LLM__API_KEY=sk-...          # Your LLM API key
 PAW_LLM__MODEL=openai/gpt-4o-mini  # Model to use
+PAW_LLM__SMART_MODEL=openai/gpt-5.3-codex  # Smart mode model
 PAW_API_KEY=change-me-strong-key  # Required for API access
 PAW_BRAVE_API_KEY=...             # Optional: enables Brave web search plugin
 ```
@@ -215,6 +220,17 @@ docker compose up -d --build
 ### 4. Verify health
 
 `GET /health` now includes a `channels` section with Telegram runtime state (`enabled`, `running`, `last_error`, timestamps).
+
+### 5. Telegram bot commands
+
+PAW registers Telegram bot commands on startup:
+
+- `/mode` — toggles between `regular` and `smart`
+- `/mode regular` — force regular mode
+- `/mode smart` — force smart mode
+- `/status` — show current mode and active model
+
+Mode is persisted per Telegram chat session. Default mode is `regular`.
 
 ## Development
 

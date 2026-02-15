@@ -19,6 +19,17 @@ logger = structlog.get_logger()
 router = APIRouter()
 
 
+def _resolve_model(
+    *,
+    config,
+    requested_model: str | None,
+    smart_mode: bool,
+) -> str:
+    if requested_model:
+        return requested_model
+    return config.llm.smart_model if smart_mode else config.llm.model
+
+
 class ChatMessage(BaseModel):
     role: str
     content: str | None = None
@@ -34,6 +45,10 @@ class ChatRequest(BaseModel):
     stream: bool = False
     conversation_id: str | None = Field(default=None, description="Resume an existing conversation")
     agent_mode: bool = Field(default=True, description="Enable agent loop with tool calling")
+    smart_mode: bool = Field(
+        default=False,
+        description="Use configured smart model unless explicit model is provided",
+    )
 
 
 class ChatResponse(BaseModel):
@@ -58,6 +73,11 @@ async def chat_completions(
     agent = request.app.state.agent
     conversations = request.app.state.conversations
     memory_tool = request.app.state.memory_tool
+    selected_model = _resolve_model(
+        config=config,
+        requested_model=body.model,
+        smart_mode=body.smart_mode,
+    )
 
     # Get or create conversation
     conv_id = body.conversation_id or str(uuid.uuid4())
@@ -78,7 +98,7 @@ async def chat_completions(
         # Run the full agent loop (think → act → observe → repeat)
         result = await agent.run(
             conversation=conversation,
-            model=body.model,
+            model=selected_model,
             temperature=body.temperature,
             max_tokens=body.max_tokens,
         )
@@ -88,7 +108,7 @@ async def chat_completions(
 
         return ChatResponse(
             id=f"paw-{uuid.uuid4().hex[:8]}",
-            model=body.model or config.llm.model,
+            model=selected_model,
             conversation_id=conv_id,
             choices=[
                 {
@@ -105,7 +125,7 @@ async def chat_completions(
         messages = [{"role": m.role, "content": m.content} for m in conversation.messages]
         response = await gateway.completion(
             messages=messages,
-            model=body.model,
+            model=selected_model,
             temperature=body.temperature,
             max_tokens=body.max_tokens,
         )
@@ -118,7 +138,7 @@ async def chat_completions(
 
         return ChatResponse(
             id=f"paw-{uuid.uuid4().hex[:8]}",
-            model=body.model or config.llm.model,
+            model=selected_model,
             conversation_id=conv_id,
             choices=[
                 {

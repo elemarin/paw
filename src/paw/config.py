@@ -37,6 +37,10 @@ class LLMConfig(BaseSettings):
     """LLM provider configuration."""
 
     model: str = Field(default="openai/gpt-4o-mini", description="LiteLLM model identifier")
+    smart_model: str = Field(
+        default="openai/gpt-5.3-codex",
+        description="LiteLLM model used when smart mode is enabled",
+    )
     api_key: str = Field(default="", description="API key for the LLM provider")
     api_base: str | None = Field(default=None, description="Custom API base URL")
     temperature: float = Field(default=0.7, ge=0.0, le=2.0)
@@ -102,6 +106,7 @@ class TelegramChannelConfig(BaseSettings):
     gateway_url: str = "http://127.0.0.1:8000/v1/chat/completions"
     api_key: str | None = None
     model: str | None = None
+    smart_model: str | None = None
     agent_mode: bool = True
 
     dm_policy: Literal["allowlist", "open", "disabled"] = "allowlist"

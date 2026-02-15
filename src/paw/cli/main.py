@@ -65,6 +65,11 @@ def chat(
     new: bool = typer.Option(False, "--new", help="Start a new conversation (ignore last conversation)"),
     no_agent: bool = typer.Option(False, "--no-agent", help="Simple proxy mode (no tools)"),
     model: str = typer.Option("", "--model", "-m", help="Override model"),
+    smart: bool = typer.Option(
+        False,
+        "--smart",
+        help="Use configured smart model",
+    ),
     raw: bool = typer.Option(False, "--raw", help="Output raw JSON response"),
 ) -> None:
     """Send a message to PAW and get a response."""
@@ -81,6 +86,7 @@ def chat(
         payload: dict = {
             "messages": [{"role": "user", "content": message_text}],
             "agent_mode": not no_agent,
+            "smart_mode": smart,
         }
         if current_conversation_id:
             payload["conversation_id"] = current_conversation_id

@@ -4,6 +4,7 @@
 # --- LLM ---
 llm:
   model: "openai/gpt-4o-mini"    # LiteLLM model identifier (e.g., anthropic/claude-3-5-sonnet, ollama/llama3)
+  smart_model: "openai/gpt-5.3-codex"
   temperature: 0.7
   max_tokens: 4096
   fallback_models:                # Models to try if primary fails
@@ -51,6 +52,8 @@ channels:
     groups_enabled: false
     require_mention: true
     agent_mode: true
+    # model: "openai/gpt-4o-mini"         # Optional Telegram-specific regular model override
+    # smart_model: "openai/gpt-5.3-codex" # Optional Telegram-specific smart model override
     poll_timeout_s: 25
     retry_delay_s: 3
     max_message_chars: 3500
