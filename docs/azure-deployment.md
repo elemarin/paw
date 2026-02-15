@@ -29,6 +29,11 @@ Memory is removed only if you delete volumes, for example:
 
 Bicep file: `infra/azure/main.bicep`
 
+SQLite mode defaults used by this repo:
+
+- Azure (via Bicep): `PAW_DB_JOURNAL_MODE=DELETE` + `PAW_DB_BUSY_TIMEOUT_MS=30000`
+- Local Docker Compose: `PAW_DB_JOURNAL_MODE=WAL`
+
 Resources created:
 
 - Azure Container Registry (ACR)

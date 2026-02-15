@@ -100,6 +100,14 @@ var containerEnv = concat(
       value: 'console'
     }
     {
+      name: 'PAW_DB_JOURNAL_MODE'
+      value: 'DELETE'
+    }
+    {
+      name: 'PAW_DB_BUSY_TIMEOUT_MS'
+      value: '30000'
+    }
+    {
       name: 'PAW_LLM__MODEL'
       value: model
     }

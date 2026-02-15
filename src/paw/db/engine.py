@@ -115,9 +115,18 @@ CREATE INDEX IF NOT EXISTS idx_channel_dedupe_created_at ON channel_dedupe(creat
 class Database:
     """Async SQLite database for PAW."""
 
-    def __init__(self, data_dir: str) -> None:
+    def __init__(
+        self,
+        data_dir: str,
+        journal_mode: str = "WAL",
+        busy_timeout_ms: int = 5000,
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.db_path = self.data_dir / "paw.db"
+        self.journal_mode = journal_mode.upper()
+        if self.journal_mode not in {"WAL", "DELETE"}:
+            raise ValueError(f"Unsupported SQLite journal mode: {journal_mode}")
+        self.busy_timeout_ms = int(busy_timeout_ms)
         self._conn: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
@@ -129,16 +138,19 @@ class Database:
         # WAL is great on local disks, but may fail on network filesystems
         # (e.g., Azure Files). Fall back to DELETE mode if WAL is unavailable.
         try:
-            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute(f"PRAGMA journal_mode={self.journal_mode}")
         except Exception as exc:
-            logger.warning(
-                "db.wal_unavailable_fallback",
-                path=str(self.db_path),
-                error=str(exc),
-            )
-            await self._conn.execute("PRAGMA journal_mode=DELETE")
+            if self.journal_mode == "WAL":
+                logger.warning(
+                    "db.wal_unavailable_fallback",
+                    path=str(self.db_path),
+                    error=str(exc),
+                )
+                await self._conn.execute("PRAGMA journal_mode=DELETE")
+            else:
+                raise
 
-        await self._conn.execute("PRAGMA busy_timeout=5000")
+        await self._conn.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
         await self._conn.execute("PRAGMA foreign_keys=ON")
 
         # Create tables
