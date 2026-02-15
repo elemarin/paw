@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
+from memsearch.store import MilvusStore
 
 from paw.agent.tools import Tool
 
@@ -19,7 +22,12 @@ class MemoryTool(Tool):
 
     def __init__(self, db: Database | None = None) -> None:
         self._store: dict[str, str] = {}
-        self._db = db
+        data_dir = Path(db.data_dir) if db else Path("data")
+        self._memsearch = MilvusStore(
+            uri=str(data_dir / "memsearch.db"),
+            collection="paw_memory",
+            dimension=2,
+        )
 
     @property
     def name(self) -> str:
@@ -60,8 +68,8 @@ class MemoryTool(Tool):
         if action == "remember":
             if not key or not value:
                 return "Error: 'remember' requires both 'key' and 'value'."
-            self._store[key] = value
-            await self._persist(key, value)
+            self._memsearch.upsert([self._to_chunk(key, value)])
+            self._sync_from_store()
             logger.info("memory.remember", key=key)
             return f"Remembered: {key} = {value}"
 
@@ -77,8 +85,8 @@ class MemoryTool(Tool):
             if not key:
                 return "Error: 'forget' requires a 'key'."
             if key in self._store:
-                del self._store[key]
-                await self._delete(key)
+                self._memsearch.delete_by_hashes([self._hash_key(key)])
+                self._sync_from_store()
                 return f"Forgot: {key}"
             return f"No memory found for key '{key}'."
 
@@ -91,31 +99,33 @@ class MemoryTool(Tool):
         return f"Unknown action: {action}"
 
     async def load_from_db(self) -> None:
-        """Load all memories from database."""
-        if not self._db:
-            return
+        """Load all memories from memsearch store."""
         try:
-            rows = await self._db.fetch_all("SELECT key, value FROM memory")
-            for row in rows:
-                self._store[row["key"]] = row["value"]
-            logger.info("memory.loaded_from_db", count=len(rows))
+            self._sync_from_store()
+            logger.info("memory.loaded_from_store", count=len(self._store))
         except Exception:
             pass
 
-    async def _persist(self, key: str, value: str) -> None:
-        """Save a memory to the database."""
-        if not self._db:
-            return
-        try:
-            await self._db.memory_set(key, value)
-        except Exception as e:
-            logger.error("memory.persist_failed", key=key, error=str(e))
+    @staticmethod
+    def _hash_key(key: str) -> str:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
 
-    async def _delete(self, key: str) -> None:
-        """Delete a memory from the database."""
-        if not self._db:
-            return
-        try:
-            await self._db.execute("DELETE FROM memory WHERE key = ?", (key,))
-        except Exception as e:
-            logger.error("memory.delete_failed", key=key, error=str(e))
+    def _to_chunk(self, key: str, value: str) -> dict[str, Any]:
+        return {
+            "chunk_hash": self._hash_key(key),
+            "embedding": [1.0, 0.0],
+            "content": value,
+            "source": "paw://memory",
+            "heading": key,
+            "heading_level": 1,
+            "start_line": 1,
+            "end_line": 1,
+        }
+
+    def _sync_from_store(self) -> None:
+        rows = self._memsearch.query(filter_expr='source == "paw://memory"')
+        self._store = {
+            str(row.get("heading", "")): str(row.get("content", ""))
+            for row in rows
+            if row.get("heading")
+        }
