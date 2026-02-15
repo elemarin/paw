@@ -16,6 +16,7 @@ services:
       - .env
     environment:
       - PAW_LOG_FORMAT=console
+      - PAW_DB_JOURNAL_MODE=WAL
       - OLLAMA_API_BASE=http://host.docker.internal:11434
     restart: unless-stopped
 
