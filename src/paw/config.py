@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -112,6 +112,29 @@ class TelegramChannelConfig(BaseSettings):
     poll_timeout_s: int = Field(default=25, ge=1, le=60)
     retry_delay_s: int = Field(default=3, ge=1, le=30)
     max_message_chars: int = Field(default=3500, ge=200, le=4000)
+
+    @field_validator("allow_from", mode="before")
+    @classmethod
+    def _parse_allow_from(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            if text.startswith("["):
+                import json
+
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [item.strip() for item in text.split(",") if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [str(value).strip()] if str(value).strip() else []
 
     model_config = SettingsConfigDict(env_prefix="PAW_TELEGRAM_")
 
