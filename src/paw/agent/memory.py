@@ -20,6 +20,10 @@ logger = structlog.get_logger()
 class MemoryTool(Tool):
     """Key-value memory that persists across conversations."""
 
+    _MEMORY_SOURCE = "paw://memory"
+    # Milvus requires vector fields; use a stable placeholder because lookups are key-based.
+    _DEFAULT_EMBEDDING = [1.0, 0.0]
+
     def __init__(self, db: Database | None = None) -> None:
         self._store: dict[str, str] = {}
         data_dir = Path(db.data_dir) if db else Path("data")
@@ -68,8 +72,12 @@ class MemoryTool(Tool):
         if action == "remember":
             if not key or not value:
                 return "Error: 'remember' requires both 'key' and 'value'."
-            self._memsearch.upsert([self._to_chunk(key, value)])
-            self._sync_from_store()
+            try:
+                self._memsearch.upsert([self._to_chunk(key, value)])
+                self._store[key] = value
+            except Exception as e:
+                logger.error("memory.remember_failed", key=key, error=str(e))
+                return "Error: failed to store memory."
             logger.info("memory.remember", key=key)
             return f"Remembered: {key} = {value}"
 
@@ -85,8 +93,12 @@ class MemoryTool(Tool):
             if not key:
                 return "Error: 'forget' requires a 'key'."
             if key in self._store:
-                self._memsearch.delete_by_hashes([self._hash_key(key)])
-                self._sync_from_store()
+                try:
+                    self._memsearch.delete_by_hashes([self._hash_key(key)])
+                    del self._store[key]
+                except Exception as e:
+                    logger.error("memory.forget_failed", key=key, error=str(e))
+                    return "Error: failed to delete memory."
                 return f"Forgot: {key}"
             return f"No memory found for key '{key}'."
 
@@ -113,9 +125,9 @@ class MemoryTool(Tool):
     def _to_chunk(self, key: str, value: str) -> dict[str, Any]:
         return {
             "chunk_hash": self._hash_key(key),
-            "embedding": [1.0, 0.0],
+            "embedding": self._DEFAULT_EMBEDDING,
             "content": value,
-            "source": "paw://memory",
+            "source": self._MEMORY_SOURCE,
             "heading": key,
             "heading_level": 1,
             "start_line": 1,
@@ -123,7 +135,7 @@ class MemoryTool(Tool):
         }
 
     def _sync_from_store(self) -> None:
-        rows = self._memsearch.query(filter_expr='source == "paw://memory"')
+        rows = self._memsearch.query(filter_expr=f'source == "{self._MEMORY_SOURCE}"')
         self._store = {
             str(row.get("heading", "")): str(row.get("content", ""))
             for row in rows
