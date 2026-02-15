@@ -232,6 +232,14 @@ PAW registers Telegram bot commands on startup:
 
 Mode is persisted per Telegram chat session. Default mode is `regular`.
 
+## Azure Deployment (GitHub Auto-Deploy)
+
+PAW can be deployed to Azure Container Apps with persistent storage and automatic GitHub deployment.
+
+- Bicep template: `infra/azure/main.bicep`
+- GitHub workflow: `.github/workflows/deploy-azure.yml`
+- Full guide: [docs/azure-deployment.md](docs/azure-deployment.md)
+
 ## Development
 
 ```bash

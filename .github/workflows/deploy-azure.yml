@@ -1,0 +1,112 @@
+name: deploy-azure
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  APP_NAME: paw
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Resolve deployment settings
+        shell: bash
+        run: |
+          echo "RESOURCE_GROUP=${{ vars.AZURE_RESOURCE_GROUP }}" >> "$GITHUB_ENV"
+          echo "LOCATION=${{ vars.AZURE_LOCATION }}" >> "$GITHUB_ENV"
+          echo "NAME_PREFIX=${{ vars.AZURE_NAME_PREFIX }}" >> "$GITHUB_ENV"
+
+      - name: Validate required variables
+        shell: bash
+        run: |
+          test -n "$RESOURCE_GROUP" || (echo "Missing repo variable AZURE_RESOURCE_GROUP" && exit 1)
+          test -n "$LOCATION" || (echo "Missing repo variable AZURE_LOCATION" && exit 1)
+          test -n "$NAME_PREFIX" || (echo "Missing repo variable AZURE_NAME_PREFIX" && exit 1)
+          test -n "${{ secrets.PAW_LLM_API_KEY }}" || (echo "Missing repo secret PAW_LLM_API_KEY" && exit 1)
+          test -n "${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" || (echo "Missing repo secret PAW_TELEGRAM_BOT_TOKEN" && exit 1)
+
+      - name: Ensure resource group exists
+        shell: bash
+        run: |
+          az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
+
+      - name: Bootstrap Azure infra
+        shell: bash
+        run: |
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name paw-bootstrap \
+            --template-file infra/azure/main.bicep \
+            --parameters \
+              namePrefix="$NAME_PREFIX" \
+              location="$LOCATION" \
+              containerAppName="$APP_NAME" \
+              image="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest" \
+              llmApiKey="${{ secrets.PAW_LLM_API_KEY }}" \
+              pawApiKey="${{ secrets.PAW_API_KEY }}" \
+              telegramBotToken="${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" \
+              telegramEnabled=true
+
+      - name: Read ACR outputs
+        shell: bash
+        run: |
+          ACR_NAME=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-bootstrap --query properties.outputs.acrName.value -o tsv)
+          ACR_LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-bootstrap --query properties.outputs.acrLoginServer.value -o tsv)
+          echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
+          echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> "$GITHUB_ENV"
+
+      - name: Login to ACR
+        shell: bash
+        run: |
+          az acr login --name "$ACR_NAME"
+
+      - name: Build and push image
+        shell: bash
+        run: |
+          IMAGE_SHA="$ACR_LOGIN_SERVER/paw:${GITHUB_SHA}"
+          IMAGE_LATEST="$ACR_LOGIN_SERVER/paw:latest"
+
+          docker build -t "$IMAGE_SHA" -t "$IMAGE_LATEST" .
+          docker push "$IMAGE_SHA"
+          docker push "$IMAGE_LATEST"
+
+          echo "PAW_IMAGE=$IMAGE_SHA" >> "$GITHUB_ENV"
+
+      - name: Deploy latest image to Container App
+        shell: bash
+        run: |
+          az deployment group create \
+            --resource-group "$RESOURCE_GROUP" \
+            --name paw-release-${GITHUB_RUN_NUMBER} \
+            --template-file infra/azure/main.bicep \
+            --parameters \
+              namePrefix="$NAME_PREFIX" \
+              location="$LOCATION" \
+              containerAppName="$APP_NAME" \
+              image="$PAW_IMAGE" \
+              llmApiKey="${{ secrets.PAW_LLM_API_KEY }}" \
+              pawApiKey="${{ secrets.PAW_API_KEY }}" \
+              telegramBotToken="${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" \
+              telegramEnabled=true
+
+      - name: Print app URL
+        shell: bash
+        run: |
+          APP_URL=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-release-${GITHUB_RUN_NUMBER} --query properties.outputs.containerAppUrl.value -o tsv)
+          echo "PAW is deployed at: $APP_URL"

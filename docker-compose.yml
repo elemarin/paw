@@ -21,5 +21,8 @@ services:
 
 volumes:
   paw-data:
+    name: paw-data
   paw-plugins:
+    name: paw-plugins
   paw-workspace:
+    name: paw-workspace
