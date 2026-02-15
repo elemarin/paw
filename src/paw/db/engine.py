@@ -126,8 +126,19 @@ class Database:
         self._conn = await aiosqlite.connect(str(self.db_path))
         self._conn.row_factory = aiosqlite.Row
 
-        # Enable WAL mode for better concurrency
-        await self._conn.execute("PRAGMA journal_mode=WAL")
+        # WAL is great on local disks, but may fail on network filesystems
+        # (e.g., Azure Files). Fall back to DELETE mode if WAL is unavailable.
+        try:
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as exc:
+            logger.warning(
+                "db.wal_unavailable_fallback",
+                path=str(self.db_path),
+                error=str(exc),
+            )
+            await self._conn.execute("PRAGMA journal_mode=DELETE")
+
+        await self._conn.execute("PRAGMA busy_timeout=5000")
         await self._conn.execute("PRAGMA foreign_keys=ON")
 
         # Create tables
