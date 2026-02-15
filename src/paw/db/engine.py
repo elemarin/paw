@@ -132,7 +132,7 @@ class Database:
     async def initialize(self) -> None:
         """Create the database and run migrations."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._conn = await aiosqlite.connect(str(self.db_path), timeout=self.busy_timeout_ms / 1000)
+        self._conn = await aiosqlite.connect(str(self.db_path))
         self._conn.row_factory = aiosqlite.Row
 
         # WAL is great on local disks, but may fail on network filesystems

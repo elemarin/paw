@@ -16,5 +16,5 @@ async def test_database_supports_delete_journal_mode(tmp_path) -> None:
 
 
 def test_database_rejects_unsupported_journal_mode(tmp_path) -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="Unsupported SQLite journal mode: INVALID"):
         Database(str(tmp_path), journal_mode="INVALID")
