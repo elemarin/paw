@@ -12,6 +12,39 @@ param containerAppName string = 'paw'
 @description('Container image to run in Azure Container Apps.')
 param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+@description('PostgreSQL flexible server admin username.')
+param postgresAdminUser string = 'pawadmin'
+
+@secure()
+@description('PostgreSQL flexible server admin password. Use URL-safe characters when possible.')
+param postgresAdminPassword string = ''
+
+@description('PostgreSQL database name used by PAW.')
+param postgresDbName string = 'paw'
+
+@description('PostgreSQL server SKU name.')
+param postgresSkuName string = 'Standard_B1ms'
+
+@description('PostgreSQL server tier.')
+@allowed([
+  'Burstable'
+  'GeneralPurpose'
+  'MemoryOptimized'
+])
+param postgresTier string = 'Burstable'
+
+@description('PostgreSQL major version.')
+@allowed([
+  '13'
+  '14'
+  '15'
+  '16'
+])
+param postgresVersion string = '16'
+
+@description('PostgreSQL storage size in GiB.')
+param postgresStorageGb int = 32
+
 @description('Primary model used by PAW.')
 param model string = 'openai/gpt-4o-mini'
 
@@ -58,9 +91,11 @@ var acrName = take('${compactPrefix}${unique}', 50)
 var storageAccountName = take('${compactPrefix}st${unique}', 24)
 var logAnalyticsName = '${namePrefix}-law'
 var managedEnvironmentName = '${namePrefix}-env'
+var postgresServerName = take('${compactPrefix}pg${unique}', 63)
 var dataShareName = 'paw-data'
 var pluginsShareName = 'paw-plugins'
 var workspaceShareName = 'paw-workspace'
+var postgresDatabaseUrl = 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${postgresDbName}?sslmode=require'
 var containerSecrets = concat(
   [
     {
@@ -74,6 +109,10 @@ var containerSecrets = concat(
     {
       name: 'paw-telegram-bot-token'
       value: telegramBotToken
+    }
+    {
+      name: 'paw-database-url'
+      value: postgresDatabaseUrl
     }
   ],
   empty(pawApiKey)
@@ -100,14 +139,6 @@ var containerEnv = concat(
       value: 'console'
     }
     {
-      name: 'PAW_DB_JOURNAL_MODE'
-      value: 'DELETE'
-    }
-    {
-      name: 'PAW_DB_BUSY_TIMEOUT_MS'
-      value: '30000'
-    }
-    {
       name: 'PAW_LLM__MODEL'
       value: model
     }
@@ -130,6 +161,10 @@ var containerEnv = concat(
     {
       name: 'PAW_TELEGRAM_BOT_TOKEN'
       secretRef: 'paw-telegram-bot-token'
+    }
+    {
+      name: 'PAW_DATABASE_URL'
+      secretRef: 'paw-database-url'
     }
   ],
   empty(pawApiKey)
@@ -164,6 +199,49 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
   properties: {
     adminUserEnabled: true
+  }
+}
+
+resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2022-12-01' = {
+  name: postgresServerName
+  location: location
+  sku: {
+    name: postgresSkuName
+    tier: postgresTier
+  }
+  properties: {
+    createMode: 'Create'
+    version: postgresVersion
+    administratorLogin: postgresAdminUser
+    administratorLoginPassword: postgresAdminPassword
+    storage: {
+      storageSizeGB: postgresStorageGb
+    }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    highAvailability: {
+      mode: 'Disabled'
+    }
+  }
+}
+
+resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2022-12-01' = {
+  name: postgresDbName
+  parent: postgresServer
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+resource postgresAllowAzureServices 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2022-12-01' = {
+  name: 'AllowAzureServices'
+  parent: postgresServer
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
   }
 }
 
@@ -351,3 +429,4 @@ output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
 output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output storageAccountName string = storage.name
+output postgresServerFqdn string = postgresServer.properties.fullyQualifiedDomainName

@@ -1,43 +1,31 @@
-# Deploy PAW to Azure (Container Apps + GitHub Actions)
+# Deploy PAW to Azure (Container Apps + PostgreSQL)
 
 This setup gives you:
 
-- Persistent memory across deployments using Azure Files mounted at `/home/paw/data`
+- Managed PostgreSQL for PAW state
+- Persistent files on Azure Files for `/home/paw/data`, `/home/paw/plugins`, and `/home/paw/workspace`
 - Auto-deploy from GitHub `main` branch
-- Telegram bot always connected to the latest deployed version
 
-## 1) Local persistence behavior (what keeps memory)
+## 1) Local behavior
 
-Your memory DB lives at:
+Local Docker Compose now runs Postgres as a sidecar service.
 
-- `/home/paw/data/paw.db`
-
-In local Docker Compose, this is persisted by the named volume `paw-data`.
-
-Memory survives:
-
-- `docker compose down`
-- `docker compose up -d --build`
-- image rebuilds and container recreation
-
-Memory is removed only if you delete volumes, for example:
-
-- `docker compose down -v`
-- `docker volume rm paw-data`
+- Database URL used by PAW (in Compose):
+  - `postgresql://paw:paw@postgres:5432/paw?sslmode=disable`
+- Data persistence:
+  - Postgres data in Docker volume `paw-postgres`
+  - PAW file data in `paw-data`, `paw-plugins`, and `paw-workspace`
 
 ## 2) Azure architecture in this repo
 
 Bicep file: `infra/azure/main.bicep`
 
-SQLite mode defaults used by this repo:
-
-- Azure (via Bicep): `PAW_DB_JOURNAL_MODE=DELETE` + `PAW_DB_BUSY_TIMEOUT_MS=30000`
-- Local Docker Compose: `PAW_DB_JOURNAL_MODE=WAL`
-
 Resources created:
 
 - Azure Container Registry (ACR)
 - Log Analytics Workspace
+- Azure Database for PostgreSQL Flexible Server + database `paw`
+- PostgreSQL firewall rule `AllowAzureServices` (0.0.0.0)
 - Azure Storage Account + File Shares
   - `paw-data`
   - `paw-plugins`
@@ -45,11 +33,9 @@ Resources created:
 - Azure Container Apps environment
 - Azure Container App (`paw`) with mounted Azure Files shares
 
-Container mount points:
+Container env wiring:
 
-- `/home/paw/data` (memory DB persists here)
-- `/home/paw/plugins`
-- `/home/paw/workspace`
+- `PAW_DATABASE_URL` is injected as a Container App secret with `sslmode=require`
 
 ## 3) GitHub setup (required once)
 
@@ -64,6 +50,7 @@ Container mount points:
 - `AZURE_CREDENTIALS` (service principal JSON for `azure/login`)
 - `PAW_LLM_API_KEY`
 - `PAW_TELEGRAM_BOT_TOKEN`
+- `PAW_POSTGRES_ADMIN_PASSWORD`
 - `PAW_API_KEY` (optional, can be blank)
 
 ## 4) CI/CD flow
@@ -77,8 +64,6 @@ On push to `main`, pipeline does:
 3. Build Docker image from repo
 4. Push image to ACR
 5. Redeploy Container App with new image tag
-
-After deploy, it prints your public Container App URL.
 
 ## 5) Using PAW CLI against cloud
 
@@ -95,10 +80,7 @@ paw status
 paw chat "hello from cloud"
 ```
 
-## 6) First production hardening steps
+## 6) Notes
 
-- Add Azure budget + cost alert for your subscription
-- Restrict ingress to trusted IPs if needed
-- Add `PAW_API_KEY` and use it from CLI
-- Move ACR auth from admin credentials to managed identity
-- Add custom domain + TLS cert if desired
+- Prefer URL-safe characters in `PAW_POSTGRES_ADMIN_PASSWORD` because it is embedded in `PAW_DATABASE_URL`.
+- `AllowAzureServices` is simple and cheap; tighten networking (private access/VNet) when you move beyond MVP.

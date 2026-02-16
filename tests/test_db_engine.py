@@ -1,20 +1,29 @@
+import os
+
 import pytest
 
 from paw.db.engine import Database
 
 
+def _test_db_url() -> str:
+    value = os.getenv("PAW_TEST_DATABASE_URL")
+    if not value:
+        pytest.skip("PAW_TEST_DATABASE_URL is not set")
+    return value
+
+
 @pytest.mark.asyncio
-async def test_database_supports_delete_journal_mode(tmp_path) -> None:
-    db = Database(str(tmp_path), journal_mode="DELETE")
+async def test_database_initializes_postgres_schema() -> None:
+    db = Database(_test_db_url())
     await db.initialize()
 
-    mode = await db.fetch_one("PRAGMA journal_mode")
-    assert mode is not None
-    assert mode["journal_mode"] == "delete"
+    row = await db.fetch_one("SELECT 1 as ok")
+    assert row is not None
+    assert row["ok"] == 1
 
     await db.close()
 
 
-def test_database_rejects_unsupported_journal_mode(tmp_path) -> None:
-    with pytest.raises(ValueError, match="Unsupported SQLite journal mode: INVALID"):
-        Database(str(tmp_path), journal_mode="INVALID")
+def test_database_requires_url() -> None:
+    with pytest.raises(ValueError, match="PAW_DATABASE_URL is required"):
+        Database("")

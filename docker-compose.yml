@@ -1,4 +1,19 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: paw-postgres
+    environment:
+      - POSTGRES_DB=paw
+      - POSTGRES_USER=paw
+      - POSTGRES_PASSWORD=paw
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paw -d paw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - paw-postgres:/var/lib/postgresql/data
+
   paw:
     build: .
     container_name: paw
@@ -14,13 +29,18 @@ services:
       - paw-workspace:/home/paw/workspace
     env_file:
       - .env
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - PAW_LOG_FORMAT=console
-      - PAW_DB_JOURNAL_MODE=WAL
+      - PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
       - OLLAMA_API_BASE=http://host.docker.internal:11434
     restart: unless-stopped
 
 volumes:
+  paw-postgres:
+    name: paw-postgres
   paw-data:
     name: paw-data
   paw-plugins:

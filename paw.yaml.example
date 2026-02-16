@@ -39,6 +39,7 @@ shell:
 # --- Server ---
 host: "127.0.0.1"
 port: 8000
+database_url: ""                 # Optional. If empty, must be provided via PAW_DATABASE_URL
 log_level: "INFO"
 log_format: "json"               # "json" or "console"
 

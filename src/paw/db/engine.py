@@ -1,4 +1,4 @@
-"""SQLite async database — PAW's persistent memory.
+"""PostgreSQL async database — PAW's persistent memory.
 
 Provides:
 - Conversation history
@@ -11,10 +11,11 @@ Provides:
 from __future__ import annotations
 
 from datetime import UTC
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import aiosqlite
+import asyncpg
 import structlog
 
 logger = structlog.get_logger()
@@ -28,7 +29,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 
 CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
@@ -39,7 +40,7 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 
 CREATE TABLE IF NOT EXISTS tool_calls (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     tool_name TEXT NOT NULL,
     arguments TEXT,
@@ -112,85 +113,94 @@ CREATE INDEX IF NOT EXISTS idx_channel_dedupe_created_at ON channel_dedupe(creat
 """
 
 
+@dataclass
+class ExecuteResult:
+    rowcount: int
+
+
 class Database:
-    """Async SQLite database for PAW."""
+    """Async PostgreSQL database for PAW."""
 
     def __init__(
         self,
-        data_dir: str,
-        journal_mode: str = "WAL",
-        busy_timeout_ms: int = 5000,
+        database_url: str,
+        data_dir: str = "data",
     ) -> None:
-        self.data_dir = Path(data_dir)
-        self.db_path = self.data_dir / "paw.db"
-        self.journal_mode = journal_mode.upper()
-        if self.journal_mode not in {"WAL", "DELETE"}:
-            raise ValueError(f"Unsupported SQLite journal mode: {journal_mode}")
-        self.busy_timeout_ms = int(busy_timeout_ms)
-        self._conn: aiosqlite.Connection | None = None
+        self.database_url = database_url.strip()
+        if not self.database_url:
+            raise ValueError("PAW_DATABASE_URL is required")
+        self.data_dir = str(Path(data_dir))
+        self._pool: asyncpg.Pool | None = None
 
     async def initialize(self) -> None:
         """Create the database and run migrations."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._conn = await aiosqlite.connect(str(self.db_path))
-        self._conn.row_factory = aiosqlite.Row
-
-        # WAL is great on local disks, but may fail on network filesystems
-        # (e.g., Azure Files). Fall back to DELETE mode if WAL is unavailable.
-        try:
-            await self._conn.execute(f"PRAGMA journal_mode={self.journal_mode}")
-        except Exception as exc:
-            if self.journal_mode == "WAL":
-                logger.warning(
-                    "db.wal_unavailable_fallback",
-                    path=str(self.db_path),
-                    error=str(exc),
-                )
-                await self._conn.execute("PRAGMA journal_mode=DELETE")
-            else:
-                raise
-
-        await self._conn.execute(f"PRAGMA busy_timeout={self.busy_timeout_ms}")
-        await self._conn.execute("PRAGMA foreign_keys=ON")
-
-        # Create tables
-        await self._conn.executescript(SCHEMA)
-        await self._conn.commit()
-
-        logger.info("db.initialized", path=str(self.db_path))
+        self._pool = await asyncpg.create_pool(self.database_url, min_size=1, max_size=10)
+        assert self._pool is not None
+        async with self._pool.acquire() as conn:
+            await conn.execute(SCHEMA)
+        logger.info("db.initialized", backend="postgresql")
 
     async def close(self) -> None:
         """Close the database connection."""
-        if self._conn:
-            await self._conn.close()
-            self._conn = None
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
             logger.info("db.closed")
 
-    async def execute(self, sql: str, params: tuple = ()) -> aiosqlite.Cursor:
+    @staticmethod
+    def _translate_sql(sql: str) -> str:
+        index = 0
+        translated: list[str] = []
+        for char in sql:
+            if char == "?":
+                index += 1
+                translated.append(f"${index}")
+            else:
+                translated.append(char)
+        return "".join(translated)
+
+    @staticmethod
+    def _parse_rowcount(status: str) -> int:
+        parts = status.strip().split()
+        if not parts:
+            return 0
+        last = parts[-1]
+        try:
+            return int(last)
+        except ValueError:
+            return 0
+
+    async def execute(self, sql: str, params: tuple = ()) -> ExecuteResult:
         """Execute a SQL statement."""
-        assert self._conn, "Database not initialized"
-        cursor = await self._conn.execute(sql, params)
-        await self._conn.commit()
-        return cursor
+        assert self._pool, "Database not initialized"
+        translated = self._translate_sql(sql)
+        async with self._pool.acquire() as conn:
+            status = await conn.execute(translated, *params)
+        return ExecuteResult(rowcount=self._parse_rowcount(status))
 
     async def execute_many(self, sql: str, params_list: list[tuple]) -> None:
         """Execute a SQL statement with multiple parameter sets."""
-        assert self._conn, "Database not initialized"
-        await self._conn.executemany(sql, params_list)
-        await self._conn.commit()
+        assert self._pool, "Database not initialized"
+        if not params_list:
+            return
+        translated = self._translate_sql(sql)
+        async with self._pool.acquire() as conn:
+            await conn.executemany(translated, params_list)
 
     async def fetch_one(self, sql: str, params: tuple = ()) -> dict[str, Any] | None:
         """Fetch a single row."""
-        assert self._conn, "Database not initialized"
-        cursor = await self._conn.execute(sql, params)
-        row = await cursor.fetchone()
+        assert self._pool, "Database not initialized"
+        translated = self._translate_sql(sql)
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(translated, *params)
         return dict(row) if row else None
 
     async def fetch_all(self, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
         """Fetch all rows."""
-        assert self._conn, "Database not initialized"
-        cursor = await self._conn.execute(sql, params)
-        rows = await cursor.fetchall()
+        assert self._pool, "Database not initialized"
+        translated = self._translate_sql(sql)
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(translated, *params)
         return [dict(row) for row in rows]
 
     # ── Convenience methods for memory ──────────────────────────────
@@ -201,8 +211,8 @@ class Database:
         now = datetime.now(UTC).isoformat()
         await self.execute(
             (
-                "INSERT OR REPLACE INTO memory "
-                "(key, value, created_at, updated_at) VALUES (?, ?, ?, ?)"
+                "INSERT INTO memory (key, value, created_at, updated_at) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
             ),
             (key, value, now, now),
         )
@@ -214,8 +224,8 @@ class Database:
 
     async def memory_delete(self, key: str) -> bool:
         """Delete a key from memory."""
-        cursor = await self.execute("DELETE FROM memory WHERE key = ?", (key,))
-        return cursor.rowcount > 0
+        result = await self.execute("DELETE FROM memory WHERE key = ?", (key,))
+        return result.rowcount > 0
 
     async def memory_list(self) -> list[dict[str, str]]:
         """List all memory keys."""
@@ -226,7 +236,10 @@ class Database:
     async def plugin_state_set(self, plugin: str, key: str, value: str) -> None:
         """Set a plugin state value."""
         await self.execute(
-            "INSERT OR REPLACE INTO plugin_state (plugin_name, key, value) VALUES (?, ?, ?)",
+            (
+                "INSERT INTO plugin_state (plugin_name, key, value) VALUES (?, ?, ?) "
+                "ON CONFLICT (plugin_name, key) DO UPDATE SET value = EXCLUDED.value"
+            ),
             (plugin, key, value),
         )
 
@@ -264,9 +277,13 @@ class Database:
 
         now = datetime.now(UTC).isoformat()
         await self.execute(
-                """INSERT OR REPLACE INTO channel_offsets
+                """INSERT INTO channel_offsets
                     (channel, account_id, last_update_id, updated_at)
-               VALUES (?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT (channel, account_id)
+               DO UPDATE SET
+                   last_update_id = EXCLUDED.last_update_id,
+                   updated_at = EXCLUDED.updated_at""",
             (channel, account_id, int(last_update_id), now),
         )
 
@@ -284,8 +301,9 @@ class Database:
 
         now = datetime.now(UTC).isoformat()
         await self.execute(
-            """INSERT OR REPLACE INTO channel_dedupe (channel, key, created_at)
-               VALUES (?, ?, ?)""",
+                """INSERT INTO channel_dedupe (channel, key, created_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (channel, key) DO NOTHING""",
             (channel, key, now),
         )
 
@@ -323,9 +341,13 @@ class Database:
 
         now = datetime.now(UTC).isoformat()
         await self.execute(
-                """INSERT OR REPLACE INTO channel_sessions
+                """INSERT INTO channel_sessions
                     (channel, session_key, conversation_id, updated_at)
-               VALUES (?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT (channel, session_key)
+               DO UPDATE SET
+                   conversation_id = EXCLUDED.conversation_id,
+                   updated_at = EXCLUDED.updated_at""",
             (channel, session_key, conversation_id, now),
         )
 
@@ -345,7 +367,7 @@ class Database:
 
         now = datetime.now(UTC).isoformat()
         await self.execute(
-            """INSERT OR REPLACE INTO channel_runtime
+            """INSERT INTO channel_runtime
                              (
                                  channel,
                                  account_id,
@@ -356,7 +378,15 @@ class Database:
                                  last_outbound_at,
                                  updated_at
                              )
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (channel, account_id)
+               DO UPDATE SET
+                   mode = EXCLUDED.mode,
+                   running = EXCLUDED.running,
+                   last_error = EXCLUDED.last_error,
+                   last_inbound_at = EXCLUDED.last_inbound_at,
+                   last_outbound_at = EXCLUDED.last_outbound_at,
+                   updated_at = EXCLUDED.updated_at""",
             (
                 channel,
                 account_id,
@@ -391,8 +421,12 @@ class Database:
 
         now = datetime.now(UTC).isoformat()
         await self.execute(
-            """INSERT OR REPLACE INTO channel_session_modes
+            """INSERT INTO channel_session_modes
                     (channel, session_key, mode, updated_at)
-               VALUES (?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT (channel, session_key)
+               DO UPDATE SET
+                   mode = EXCLUDED.mode,
+                   updated_at = EXCLUDED.updated_at""",
             (channel, session_key, mode, now),
         )

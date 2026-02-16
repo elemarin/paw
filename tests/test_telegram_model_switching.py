@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
@@ -7,6 +8,13 @@ import pytest
 from paw.channels.telegram.provider import TelegramChannelProvider
 from paw.config import TelegramChannelConfig
 from paw.db.engine import Database
+
+
+def _test_db_url() -> str:
+    value = os.getenv("PAW_TEST_DATABASE_URL")
+    if not value:
+        pytest.skip("PAW_TEST_DATABASE_URL is not set")
+    return value
 
 
 class _FakeResponse:
@@ -27,8 +35,8 @@ class _FakeClient:
 
 
 @pytest.mark.asyncio
-async def test_telegram_mode_toggle_switches_model_for_chat(tmp_path) -> None:
-    db = Database(str(tmp_path))
+async def test_telegram_mode_toggle_switches_model_for_chat() -> None:
+    db = Database(_test_db_url())
     await db.initialize()
 
     captured_models: list[str | None] = []

@@ -1,3 +1,5 @@
+import pytest
+
 from paw.agent.memory import MemoryTool
 
 
@@ -7,6 +9,8 @@ class _TestDatabase:
 
 
 async def test_memory_tool_uses_memsearch_store(tmp_path):
+    pytest.importorskip("milvus_lite")
+
     db = _TestDatabase(tmp_path)
     tool = MemoryTool(db)
 

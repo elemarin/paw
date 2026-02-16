@@ -40,6 +40,7 @@ jobs:
           test -n "$NAME_PREFIX" || (echo "Missing repo variable AZURE_NAME_PREFIX" && exit 1)
           test -n "${{ secrets.PAW_LLM_API_KEY }}" || (echo "Missing repo secret PAW_LLM_API_KEY" && exit 1)
           test -n "${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" || (echo "Missing repo secret PAW_TELEGRAM_BOT_TOKEN" && exit 1)
+          test -n "${{ secrets.PAW_POSTGRES_ADMIN_PASSWORD }}" || (echo "Missing repo secret PAW_POSTGRES_ADMIN_PASSWORD" && exit 1)
 
       - name: Ensure resource group exists
         shell: bash
@@ -58,6 +59,7 @@ jobs:
               location="$LOCATION" \
               containerAppName="$APP_NAME" \
               image="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest" \
+              postgresAdminPassword="${{ secrets.PAW_POSTGRES_ADMIN_PASSWORD }}" \
               llmApiKey="${{ secrets.PAW_LLM_API_KEY }}" \
               pawApiKey="${{ secrets.PAW_API_KEY }}" \
               telegramBotToken="${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" \
@@ -100,6 +102,7 @@ jobs:
               location="$LOCATION" \
               containerAppName="$APP_NAME" \
               image="$PAW_IMAGE" \
+              postgresAdminPassword="${{ secrets.PAW_POSTGRES_ADMIN_PASSWORD }}" \
               llmApiKey="${{ secrets.PAW_LLM_API_KEY }}" \
               pawApiKey="${{ secrets.PAW_API_KEY }}" \
               telegramBotToken="${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" \

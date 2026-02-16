@@ -96,8 +96,8 @@ curl http://localhost:8000/v1/chat/completions \
 │  └───────────────────────────────────┘ │
 │                                         │
 │  ┌──────────┐  ┌──────────────────┐    │
-│  │ SQLite   │  │  Plugin System   │    │
-│  │ paw.db   │  │  /plugins/*      │    │
+│  │PostgreSQL│  │  Plugin System   │    │
+│  │   paw    │  │  /plugins/*      │    │
 │  └──────────┘  └──────────────────┘    │
 │                                         │
 │  ┌──────────────────────────────────┐  │
@@ -182,6 +182,7 @@ paw chat "Search the web for the latest FastAPI release notes"
 PAW_LLM__API_KEY=sk-...          # Your LLM API key
 PAW_LLM__MODEL=openai/gpt-4o-mini  # Model to use
 PAW_LLM__SMART_MODEL=openai/gpt-5.3-codex  # Smart mode model
+PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
 PAW_API_KEY=change-me-strong-key  # Required for API access
 PAW_BRAVE_API_KEY=...             # Optional: enables Brave web search plugin
 ```
@@ -278,7 +279,7 @@ src/paw/
     shell.py         # Shell command execution
     files.py         # File operations
   db/
-    engine.py        # SQLite async database
+    engine.py        # PostgreSQL async database
   extensions/
     base.py          # Plugin base class
     loader.py        # Auto-discovery plugin loader

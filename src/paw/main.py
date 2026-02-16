@@ -42,11 +42,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("paw.soul.loaded", length=len(soul_text))
 
     # Initialize database
-    db = Database(
-        config.data_dir,
-        journal_mode=config.db_journal_mode,
-        busy_timeout_ms=config.db_busy_timeout_ms,
-    )
+    db = Database(config.database_url, data_dir=config.data_dir)
     await db.initialize()
 
     # Initialize LLM gateway

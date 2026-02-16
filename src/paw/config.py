@@ -165,8 +165,7 @@ class PawConfig(BaseSettings):
     plugins_dir: str = Field(default="/home/paw/plugins")
     workspace_dir: str = Field(default="/home/paw/workspace")
     soul_path: str = Field(default="/home/paw/soul.md")
-    db_journal_mode: Literal["WAL", "DELETE"] = Field(default="WAL")
-    db_busy_timeout_ms: int = Field(default=5000, ge=100, le=120000)
+    database_url: str = Field(default="", description="PostgreSQL DSN (PAW_DATABASE_URL)")
 
     # Sub-configs
     llm: LLMConfig = Field(default_factory=LLMConfig)

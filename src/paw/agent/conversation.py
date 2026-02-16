@@ -192,8 +192,12 @@ class ConversationManager:
             return
         try:
             await self._db.execute(
-                """INSERT OR REPLACE INTO conversations (id, title, created_at)
-                   VALUES (?, ?, ?)""",
+                """INSERT INTO conversations (id, title, created_at)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT (id)
+                   DO UPDATE SET
+                       title = EXCLUDED.title,
+                       created_at = EXCLUDED.created_at""",
                 (conv.id, conv.title or conv.last_user_message, conv.created_at.isoformat()),
             )
             # Save new messages (simple: delete and re-insert)

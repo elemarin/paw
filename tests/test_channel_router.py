@@ -1,12 +1,21 @@
+import os
+
 import pytest
 
 from paw.channels.router import ChannelRouter
 from paw.db.engine import Database
 
 
+def _test_db_url() -> str:
+    value = os.getenv("PAW_TEST_DATABASE_URL")
+    if not value:
+        pytest.skip("PAW_TEST_DATABASE_URL is not set")
+    return value
+
+
 @pytest.mark.asyncio
-async def test_channel_router_returns_stable_conversation_id(tmp_path) -> None:
-    db = Database(str(tmp_path))
+async def test_channel_router_returns_stable_conversation_id() -> None:
+    db = Database(_test_db_url())
     await db.initialize()
 
     router = ChannelRouter(db)
@@ -19,8 +28,8 @@ async def test_channel_router_returns_stable_conversation_id(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_channel_router_distinguishes_session_keys(tmp_path) -> None:
-    db = Database(str(tmp_path))
+async def test_channel_router_distinguishes_session_keys() -> None:
+    db = Database(_test_db_url())
     await db.initialize()
 
     router = ChannelRouter(db)
