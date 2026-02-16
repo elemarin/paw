@@ -108,6 +108,12 @@ jobs:
       - name: Deploy containers on VM
         shell: bash
         run: |
+          TELEGRAM_DM_POLICY="${{ vars.PAW_TELEGRAM_DM_POLICY }}"
+          if [ -z "$TELEGRAM_DM_POLICY" ]; then
+            TELEGRAM_DM_POLICY="open"
+          fi
+          TELEGRAM_ALLOW_FROM="${{ vars.PAW_TELEGRAM_ALLOW_FROM }}"
+
           ENV_B64=$(base64 -w0 <<EOF
           PAW_LLM__API_KEY=${{ secrets.PAW_LLM_API_KEY }}
           PAW_LLM__MODEL=openai/gpt-5-mini
@@ -115,6 +121,8 @@ jobs:
           PAW_API_KEY=${{ secrets.PAW_API_KEY }}
           PAW_TELEGRAM_ENABLED=true
           PAW_TELEGRAM_BOT_TOKEN=${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}
+          PAW_TELEGRAM_DM_POLICY=$TELEGRAM_DM_POLICY
+          PAW_TELEGRAM_ALLOW_FROM=$TELEGRAM_ALLOW_FROM
           PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
           EOF
           )
