@@ -31,6 +31,11 @@ jobs:
           echo "RESOURCE_GROUP=${{ vars.AZURE_RESOURCE_GROUP }}" >> "$GITHUB_ENV"
           echo "LOCATION=${{ vars.AZURE_LOCATION }}" >> "$GITHUB_ENV"
           echo "NAME_PREFIX=${{ vars.AZURE_NAME_PREFIX }}" >> "$GITHUB_ENV"
+          VM_ADMIN_USERNAME="${{ vars.AZURE_VM_ADMIN_USERNAME }}"
+          if [ -z "$VM_ADMIN_USERNAME" ]; then
+            VM_ADMIN_USERNAME="paw"
+          fi
+          echo "VM_ADMIN_USERNAME=$VM_ADMIN_USERNAME" >> "$GITHUB_ENV"
 
       - name: Validate required variables
         shell: bash
@@ -38,16 +43,17 @@ jobs:
           test -n "$RESOURCE_GROUP" || (echo "Missing repo variable AZURE_RESOURCE_GROUP" && exit 1)
           test -n "$LOCATION" || (echo "Missing repo variable AZURE_LOCATION" && exit 1)
           test -n "$NAME_PREFIX" || (echo "Missing repo variable AZURE_NAME_PREFIX" && exit 1)
+          test -n "$VM_ADMIN_USERNAME" || (echo "Missing repo variable AZURE_VM_ADMIN_USERNAME" && exit 1)
+          test -n "${{ secrets.AZURE_VM_SSH_PUBLIC_KEY }}" || (echo "Missing repo secret AZURE_VM_SSH_PUBLIC_KEY" && exit 1)
           test -n "${{ secrets.PAW_LLM_API_KEY }}" || (echo "Missing repo secret PAW_LLM_API_KEY" && exit 1)
           test -n "${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" || (echo "Missing repo secret PAW_TELEGRAM_BOT_TOKEN" && exit 1)
-          test -n "${{ secrets.PAW_POSTGRES_ADMIN_PASSWORD }}" || (echo "Missing repo secret PAW_POSTGRES_ADMIN_PASSWORD" && exit 1)
 
       - name: Ensure resource group exists
         shell: bash
         run: |
           az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
 
-      - name: Bootstrap Azure infra
+      - name: Bootstrap Azure infra (single VM + ACR)
         shell: bash
         run: |
           az deployment group create \
@@ -57,21 +63,21 @@ jobs:
             --parameters \
               namePrefix="$NAME_PREFIX" \
               location="$LOCATION" \
-              containerAppName="$APP_NAME" \
-              image="mcr.microsoft.com/azuredocs/containerapps-helloworld:latest" \
-              postgresAdminPassword="${{ secrets.PAW_POSTGRES_ADMIN_PASSWORD }}" \
-              llmApiKey="${{ secrets.PAW_LLM_API_KEY }}" \
-              pawApiKey="${{ secrets.PAW_API_KEY }}" \
-              telegramBotToken="${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" \
-              telegramEnabled=true
+              vmAdminUsername="$VM_ADMIN_USERNAME" \
+              vmSshPublicKey="${{ secrets.AZURE_VM_SSH_PUBLIC_KEY }}"
 
-      - name: Read ACR outputs
+      - name: Read infra outputs
         shell: bash
         run: |
           ACR_NAME=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-bootstrap --query properties.outputs.acrName.value -o tsv)
           ACR_LOGIN_SERVER=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-bootstrap --query properties.outputs.acrLoginServer.value -o tsv)
+          VM_NAME=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-bootstrap --query properties.outputs.vmName.value -o tsv)
+          VM_PUBLIC_IP=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-bootstrap --query properties.outputs.vmPublicIp.value -o tsv)
+
           echo "ACR_NAME=$ACR_NAME" >> "$GITHUB_ENV"
           echo "ACR_LOGIN_SERVER=$ACR_LOGIN_SERVER" >> "$GITHUB_ENV"
+          echo "VM_NAME=$VM_NAME" >> "$GITHUB_ENV"
+          echo "VM_PUBLIC_IP=$VM_PUBLIC_IP" >> "$GITHUB_ENV"
 
       - name: Login to ACR
         shell: bash
@@ -90,26 +96,90 @@ jobs:
 
           echo "PAW_IMAGE=$IMAGE_SHA" >> "$GITHUB_ENV"
 
-      - name: Deploy latest image to Container App
+      - name: Fetch ACR admin credentials
         shell: bash
         run: |
-          az deployment group create \
+          ACR_USERNAME=$(az acr credential show --name "$ACR_NAME" --query username -o tsv)
+          ACR_PASSWORD=$(az acr credential show --name "$ACR_NAME" --query "passwords[0].value" -o tsv)
+
+          echo "ACR_USERNAME=$ACR_USERNAME" >> "$GITHUB_ENV"
+          echo "ACR_PASSWORD=$ACR_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Deploy containers on VM
+        shell: bash
+        run: |
+          az vm run-command invoke \
             --resource-group "$RESOURCE_GROUP" \
-            --name paw-release-${GITHUB_RUN_NUMBER} \
-            --template-file infra/azure/main.bicep \
-            --parameters \
-              namePrefix="$NAME_PREFIX" \
-              location="$LOCATION" \
-              containerAppName="$APP_NAME" \
-              image="$PAW_IMAGE" \
-              postgresAdminPassword="${{ secrets.PAW_POSTGRES_ADMIN_PASSWORD }}" \
-              llmApiKey="${{ secrets.PAW_LLM_API_KEY }}" \
-              pawApiKey="${{ secrets.PAW_API_KEY }}" \
-              telegramBotToken="${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}" \
-              telegramEnabled=true
+            --name "$VM_NAME" \
+            --command-id RunShellScript \
+            --scripts '
+              set -e
+              sudo apt-get update
+              sudo apt-get install -y ca-certificates curl gnupg
+              if ! command -v docker >/dev/null 2>&1; then
+                sudo install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                sudo chmod a+r /etc/apt/keyrings/docker.gpg
+                echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+                sudo apt-get update
+                sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+              fi
+
+              sudo mkdir -p /opt/paw/data /opt/paw/plugins /opt/paw/workspace /opt/paw/postgres
+
+              cat <<EOF | sudo tee /opt/paw/.env >/dev/null
+              PAW_LLM__API_KEY=${{ secrets.PAW_LLM_API_KEY }}
+              PAW_LLM__MODEL=openai/gpt-4o-mini
+              PAW_LLM__SMART_MODEL=openai/gpt-5.3-codex
+              PAW_API_KEY=${{ secrets.PAW_API_KEY }}
+              PAW_TELEGRAM_ENABLED=true
+              PAW_TELEGRAM_BOT_TOKEN=${{ secrets.PAW_TELEGRAM_BOT_TOKEN }}
+              PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
+              EOF
+
+              cat <<EOF | sudo tee /opt/paw/docker-compose.yml >/dev/null
+              services:
+                postgres:
+                  image: postgres:16-alpine
+                  container_name: paw-postgres
+                  restart: unless-stopped
+                  environment:
+                    POSTGRES_DB: paw
+                    POSTGRES_USER: paw
+                    POSTGRES_PASSWORD: paw
+                  healthcheck:
+                    test: ["CMD-SHELL", "pg_isready -U paw -d paw"]
+                    interval: 10s
+                    timeout: 5s
+                    retries: 5
+                  volumes:
+                    - /opt/paw/postgres:/var/lib/postgresql/data
+
+                paw:
+                  image: ${{ env.PAW_IMAGE }}
+                  container_name: paw
+                  restart: unless-stopped
+                  ports:
+                    - "8000:8000"
+                  depends_on:
+                    postgres:
+                      condition: service_healthy
+                  env_file:
+                    - /opt/paw/.env
+                  environment:
+                    - PAW_LOG_FORMAT=console
+                  volumes:
+                    - /opt/paw/data:/home/paw/data
+                    - /opt/paw/plugins:/home/paw/plugins
+                    - /opt/paw/workspace:/home/paw/workspace
+              EOF
+
+              sudo docker login ${{ env.ACR_LOGIN_SERVER }} -u ${{ env.ACR_USERNAME }} -p ${{ env.ACR_PASSWORD }}
+              sudo docker compose -f /opt/paw/docker-compose.yml pull
+              sudo docker compose -f /opt/paw/docker-compose.yml up -d
+            '
 
       - name: Print app URL
         shell: bash
         run: |
-          APP_URL=$(az deployment group show -g "$RESOURCE_GROUP" -n paw-release-${GITHUB_RUN_NUMBER} --query properties.outputs.containerAppUrl.value -o tsv)
-          echo "PAW is deployed at: $APP_URL"
+          echo "PAW is deployed at: http://$VM_PUBLIC_IP:8000"

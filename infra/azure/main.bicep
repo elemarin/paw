@@ -6,190 +6,24 @@ param namePrefix string = 'paw'
 @description('Azure region for all resources.')
 param location string = resourceGroup().location
 
-@description('Container App name.')
-param containerAppName string = 'paw'
+@description('VM size for PAW host.')
+param vmSize string = 'Standard_B2s'
 
-@description('Container image to run in Azure Container Apps.')
-param image string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+@description('Admin username for the VM.')
+param vmAdminUsername string = 'paw'
 
-@description('PostgreSQL flexible server admin username.')
-param postgresAdminUser string = 'pawadmin'
-
-@secure()
-@description('PostgreSQL flexible server admin password. Use URL-safe characters when possible.')
-param postgresAdminPassword string = ''
-
-@description('PostgreSQL database name used by PAW.')
-param postgresDbName string = 'paw'
-
-@description('PostgreSQL server SKU name.')
-param postgresSkuName string = 'Standard_B1ms'
-
-@description('PostgreSQL server tier.')
-@allowed([
-  'Burstable'
-  'GeneralPurpose'
-  'MemoryOptimized'
-])
-param postgresTier string = 'Burstable'
-
-@description('PostgreSQL major version.')
-@allowed([
-  '13'
-  '14'
-  '15'
-  '16'
-])
-param postgresVersion string = '16'
-
-@description('PostgreSQL storage size in GiB.')
-param postgresStorageGb int = 32
-
-@description('Primary model used by PAW.')
-param model string = 'openai/gpt-4o-mini'
-
-@description('Smart model used by PAW.')
-param smartModel string = 'openai/gpt-5.3-codex'
-
-@secure()
-@description('LLM provider API key (PAW_LLM__API_KEY).')
-param llmApiKey string = ''
-
-@secure()
-@description('Optional PAW API key (PAW_API_KEY).')
-param pawApiKey string = ''
-
-@secure()
-@description('Telegram bot token (PAW_TELEGRAM_BOT_TOKEN).')
-param telegramBotToken string = ''
-
-@description('Enable Telegram runtime.')
-param telegramEnabled bool = true
-
-@description('Optional Ollama endpoint reachable from ACA.')
-param ollamaApiBase string = ''
-
-@description('Container CPU allocation.')
-param cpu int = 1
-
-@description('Container memory allocation.')
-@allowed([
-  '1Gi'
-  '2Gi'
-])
-param memory string = '2Gi'
-
-@description('Minimum replica count.')
-param minReplicas int = 1
-
-@description('Maximum replica count.')
-param maxReplicas int = 1
+@description('SSH public key for VM access.')
+param vmSshPublicKey string
 
 var unique = toLower(uniqueString(resourceGroup().id))
 var compactPrefix = toLower(replace(namePrefix, '-', ''))
 var acrName = take('${compactPrefix}${unique}', 50)
-var storageAccountName = take('${compactPrefix}st${unique}', 24)
-var logAnalyticsName = '${namePrefix}-law'
-var managedEnvironmentName = '${namePrefix}-env'
-var postgresServerName = take('${compactPrefix}pg${unique}', 63)
-var dataShareName = 'paw-data'
-var pluginsShareName = 'paw-plugins'
-var workspaceShareName = 'paw-workspace'
-var postgresDatabaseUrl = 'postgresql://${postgresAdminUser}:${postgresAdminPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/${postgresDbName}?sslmode=require'
-var containerSecrets = concat(
-  [
-    {
-      name: 'acr-password'
-      value: acr.listCredentials().passwords[0].value
-    }
-    {
-      name: 'paw-llm-api-key'
-      value: llmApiKey
-    }
-    {
-      name: 'paw-telegram-bot-token'
-      value: telegramBotToken
-    }
-    {
-      name: 'paw-database-url'
-      value: postgresDatabaseUrl
-    }
-  ],
-  empty(pawApiKey)
-    ? []
-    : [
-        {
-          name: 'paw-api-key'
-          value: pawApiKey
-        }
-      ]
-)
-var containerEnv = concat(
-  [
-    {
-      name: 'PAW_HOST'
-      value: '0.0.0.0'
-    }
-    {
-      name: 'PAW_PORT'
-      value: '8000'
-    }
-    {
-      name: 'PAW_LOG_FORMAT'
-      value: 'console'
-    }
-    {
-      name: 'PAW_LLM__MODEL'
-      value: model
-    }
-    {
-      name: 'PAW_LLM__SMART_MODEL'
-      value: smartModel
-    }
-    {
-      name: 'PAW_TELEGRAM_ENABLED'
-      value: '${telegramEnabled}'
-    }
-    {
-      name: 'OLLAMA_API_BASE'
-      value: ollamaApiBase
-    }
-    {
-      name: 'PAW_LLM__API_KEY'
-      secretRef: 'paw-llm-api-key'
-    }
-    {
-      name: 'PAW_TELEGRAM_BOT_TOKEN'
-      secretRef: 'paw-telegram-bot-token'
-    }
-    {
-      name: 'PAW_DATABASE_URL'
-      secretRef: 'paw-database-url'
-    }
-  ],
-  empty(pawApiKey)
-    ? []
-    : [
-        {
-          name: 'PAW_API_KEY'
-          secretRef: 'paw-api-key'
-        }
-      ]
-)
-
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
-  name: logAnalyticsName
-  location: location
-  properties: {
-    retentionInDays: 30
-    features: {
-      searchVersion: 1
-    }
-    sku: {
-      name: 'PerGB2018'
-    }
-  }
-}
+var publicIpName = '${namePrefix}-pip'
+var nsgName = '${namePrefix}-nsg'
+var vnetName = '${namePrefix}-vnet'
+var subnetName = 'default'
+var nicName = '${namePrefix}-nic'
+var vmName = '${namePrefix}-vm'
 
 resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   name: acrName
@@ -202,223 +36,139 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
   }
 }
 
-resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2022-12-01' = {
-  name: postgresServerName
+resource publicIp 'Microsoft.Network/publicIPAddresses@2023-11-01' = {
+  name: publicIpName
   location: location
   sku: {
-    name: postgresSkuName
-    tier: postgresTier
+    name: 'Standard'
   }
   properties: {
-    createMode: 'Create'
-    version: postgresVersion
-    administratorLogin: postgresAdminUser
-    administratorLoginPassword: postgresAdminPassword
-    storage: {
-      storageSizeGB: postgresStorageGb
-    }
-    backup: {
-      backupRetentionDays: 7
-      geoRedundantBackup: 'Disabled'
-    }
-    highAvailability: {
-      mode: 'Disabled'
-    }
+    publicIPAllocationMethod: 'Static'
   }
 }
 
-resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2022-12-01' = {
-  name: postgresDbName
-  parent: postgresServer
-  properties: {
-    charset: 'UTF8'
-    collation: 'en_US.utf8'
-  }
-}
-
-resource postgresAllowAzureServices 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2022-12-01' = {
-  name: 'AllowAzureServices'
-  parent: postgresServer
-  properties: {
-    startIpAddress: '0.0.0.0'
-    endIpAddress: '0.0.0.0'
-  }
-}
-
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: storageAccountName
-  location: location
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'StorageV2'
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    supportsHttpsTrafficOnly: true
-    accessTier: 'Hot'
-  }
-}
-
-resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
-  name: 'default'
-  parent: storage
-}
-
-resource dataShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  name: dataShareName
-  parent: fileService
-}
-
-resource pluginsShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  name: pluginsShareName
-  parent: fileService
-}
-
-resource workspaceShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  name: workspaceShareName
-  parent: fileService
-}
-
-resource managedEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: managedEnvironmentName
+resource nsg 'Microsoft.Network/networkSecurityGroups@2023-11-01' = {
+  name: nsgName
   location: location
   properties: {
-    appLogsConfiguration: {
-      destination: 'log-analytics'
-      logAnalyticsConfiguration: {
-        customerId: logAnalytics.properties.customerId
-        sharedKey: logAnalytics.listKeys().primarySharedKey
-      }
-    }
-  }
-}
-
-resource envStorageData 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  name: 'paw-data'
-  parent: managedEnvironment
-  properties: {
-    azureFile: {
-      accountName: storage.name
-      accountKey: storage.listKeys().keys[0].value
-      shareName: dataShare.name
-      accessMode: 'ReadWrite'
-    }
-  }
-}
-
-resource envStoragePlugins 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  name: 'paw-plugins'
-  parent: managedEnvironment
-  properties: {
-    azureFile: {
-      accountName: storage.name
-      accountKey: storage.listKeys().keys[0].value
-      shareName: pluginsShare.name
-      accessMode: 'ReadWrite'
-    }
-  }
-}
-
-resource envStorageWorkspace 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  name: 'paw-workspace'
-  parent: managedEnvironment
-  properties: {
-    azureFile: {
-      accountName: storage.name
-      accountKey: storage.listKeys().keys[0].value
-      shareName: workspaceShare.name
-      accessMode: 'ReadWrite'
-    }
-  }
-}
-
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
-  name: containerAppName
-  location: location
-  properties: {
-    managedEnvironmentId: managedEnvironment.id
-    configuration: {
-      activeRevisionsMode: 'Single'
-      ingress: {
-        external: true
-        targetPort: 8000
-        transport: 'auto'
-      }
-      secrets: containerSecrets
-      registries: [
-        {
-          server: acr.properties.loginServer
-          username: acr.listCredentials().username
-          passwordSecretRef: 'acr-password'
+    securityRules: [
+      {
+        name: 'AllowSSH'
+        properties: {
+          priority: 100
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '22'
         }
+      }
+      {
+        name: 'AllowPAWHttp'
+        properties: {
+          priority: 110
+          protocol: 'Tcp'
+          access: 'Allow'
+          direction: 'Inbound'
+          sourceAddressPrefix: '*'
+          sourcePortRange: '*'
+          destinationAddressPrefix: '*'
+          destinationPortRange: '8000'
+        }
+      }
+    ]
+  }
+}
+
+resource vnet 'Microsoft.Network/virtualNetworks@2023-11-01' = {
+  name: vnetName
+  location: location
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        '10.10.0.0/16'
       ]
     }
-    template: {
-      containers: [
-        {
-          name: 'paw'
-          image: image
-          resources: {
-            cpu: cpu
-            memory: memory
+    subnets: [
+      {
+        name: subnetName
+        properties: {
+          addressPrefix: '10.10.1.0/24'
+          networkSecurityGroup: {
+            id: nsg.id
           }
-          env: containerEnv
-          volumeMounts: [
-            {
-              volumeName: 'data'
-              mountPath: '/home/paw/data'
-            }
-            {
-              volumeName: 'plugins'
-              mountPath: '/home/paw/plugins'
-            }
-            {
-              volumeName: 'workspace'
-              mountPath: '/home/paw/workspace'
-            }
-          ]
-          probes: [
-            {
-              type: 'Liveness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-              }
-              initialDelaySeconds: 20
-              periodSeconds: 20
-            }
-            {
-              type: 'Readiness'
-              httpGet: {
-                path: '/health'
-                port: 8000
-              }
-              initialDelaySeconds: 10
-              periodSeconds: 10
-            }
-          ]
         }
-      ]
-      scale: {
-        minReplicas: minReplicas
-        maxReplicas: maxReplicas
       }
-      volumes: [
-        {
-          name: 'data'
-          storageType: 'AzureFile'
-          storageName: envStorageData.name
+    ]
+  }
+}
+
+resource nic 'Microsoft.Network/networkInterfaces@2023-11-01' = {
+  name: nicName
+  location: location
+  properties: {
+    ipConfigurations: [
+      {
+        name: 'ipconfig1'
+        properties: {
+          privateIPAllocationMethod: 'Dynamic'
+          subnet: {
+            id: vnet.properties.subnets[0].id
+          }
+          publicIPAddress: {
+            id: publicIp.id
+          }
         }
-        {
-          name: 'plugins'
-          storageType: 'AzureFile'
-          storageName: envStoragePlugins.name
+      }
+    ]
+  }
+}
+
+resource vm 'Microsoft.Compute/virtualMachines@2023-09-01' = {
+  name: vmName
+  location: location
+  properties: {
+    hardwareProfile: {
+      vmSize: vmSize
+    }
+    osProfile: {
+      computerName: vmName
+      adminUsername: vmAdminUsername
+      linuxConfiguration: {
+        disablePasswordAuthentication: true
+        ssh: {
+          publicKeys: [
+            {
+              path: '/home/${vmAdminUsername}/.ssh/authorized_keys'
+              keyData: vmSshPublicKey
+            }
+          ]
         }
+      }
+    }
+    storageProfile: {
+      imageReference: {
+        publisher: 'Canonical'
+        offer: 'ubuntu-24_04-lts'
+        sku: 'server'
+        version: 'latest'
+      }
+      osDisk: {
+        createOption: 'FromImage'
+        managedDisk: {
+          storageAccountType: 'StandardSSD_LRS'
+        }
+      }
+    }
+    networkProfile: {
+      networkInterfaces: [
         {
-          name: 'workspace'
-          storageType: 'AzureFile'
-          storageName: envStorageWorkspace.name
+          id: nic.id
+          properties: {
+            primary: true
+          }
         }
       ]
     }
@@ -427,6 +177,6 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 
 output acrName string = acr.name
 output acrLoginServer string = acr.properties.loginServer
-output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
-output storageAccountName string = storage.name
-output postgresServerFqdn string = postgresServer.properties.fullyQualifiedDomainName
+output vmName string = vm.name
+output vmPublicIp string = publicIp.properties.ipAddress
+output vmSshCommand string = 'ssh ${vmAdminUsername}@${publicIp.properties.ipAddress}'
