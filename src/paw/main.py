@@ -59,7 +59,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry.register(FileTool(config))
     registry.register(memory_tool)
     registry.register(CoderTool(config.workspace_dir, config.plugins_dir))
-    registry.register(AutomationTool(db=db, heartbeat=config.heartbeat))
+    automation_tool = AutomationTool(
+        db=db,
+        heartbeat=config.heartbeat,
+        llm=config.llm,
+    )
+    registry.register(automation_tool)
 
     # Load plugins
     plugin_tools = await load_plugins(config.plugins_dir, registry)
@@ -123,6 +128,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         inbound_handler=handle_channel_inbound,
     )
     await channel_manager.start()
+    automation_tool.on_models_updated = channel_manager.set_models
 
     async def run_automation_prompt(prompt: str, source: str) -> None:
         event = ChannelInboundEvent(

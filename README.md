@@ -114,20 +114,26 @@ curl http://localhost:8000/v1/chat/completions \
 | **files** | Read, write, list, search, append, delete files — sandboxed to workspace/plugins/data/tmp directories only |
 | **memory** | Persistent key-value memory (MemSearch-backed) across conversations — remember, recall, forget, list |
 | **coder** | Create extensions, standalone scripts, and self-improvement proposals — with scaffolding and source introspection |
-| **automation** | Manage heartbeat checks, cron jobs, and Telegram pairing-code generation |
+| **automation** | Manage heartbeat checks, cron jobs, Telegram pairing-code generation, and runtime model/provider switching |
 
 ## Heartbeat + Cron (OpenClaw-style proactive automation)
 
 PAW now includes a production heartbeat scheduler:
 
 - Default cadence: **every 5 minutes**
-- Checklist file: `heartbit.md` (with `heatbit.md` alias for compatibility)
+- Checklist file: `heartbit.md`
 - Cron jobs: configured and managed through the `automation` skill
 
 Example:
 
 ```bash
 paw chat "Use automation action cron_add with schedule */30 * * * * to run a workspace summary"
+```
+
+Switch models/providers on the fly (OpenAI, Azure, Ollama, etc.) with the same skill:
+
+```bash
+paw chat "Use automation action model_set with model ollama/llama3.1"
 ```
 
 ## Security Hardening

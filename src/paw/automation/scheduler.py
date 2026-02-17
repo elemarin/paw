@@ -83,10 +83,8 @@ class AutomationScheduler:
 
 def _load_checklist(path: str) -> str:
     primary = Path(path)
-    fallback = primary.with_name("heatbit.md")
-    for candidate in (primary, fallback):
-        if candidate.exists():
-            return candidate.read_text(encoding="utf-8").strip()
+    if primary.exists():
+        return primary.read_text(encoding="utf-8").strip()
     return ""
 
 

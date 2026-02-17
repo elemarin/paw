@@ -7,14 +7,23 @@ from pathlib import Path
 from typing import Any
 
 from paw.agent.tools import Tool
-from paw.config import HeartbeatConfig
+from paw.config import HeartbeatConfig, LLMConfig
 from paw.db.engine import Database
 
 
 class AutomationTool(Tool):
-    def __init__(self, *, db: Database, heartbeat: HeartbeatConfig) -> None:
+    def __init__(
+        self,
+        *,
+        db: Database,
+        heartbeat: HeartbeatConfig,
+        llm: LLMConfig,
+        on_models_updated: Any = None,
+    ) -> None:
         self.db = db
         self.heartbeat = heartbeat
+        self.llm = llm
+        self.on_models_updated = on_models_updated
 
     @property
     def name(self) -> str:
@@ -22,7 +31,7 @@ class AutomationTool(Tool):
 
     @property
     def description(self) -> str:
-        return "Manage heartbeat checks, cron jobs, and channel pairing codes."
+        return "Manage heartbeat checks, cron jobs, channel pairing codes, and runtime models."
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -38,6 +47,10 @@ class AutomationTool(Tool):
                         "cron_list",
                         "cron_remove",
                         "telegram_pair_code",
+                        "model_show",
+                        "model_set",
+                        "model_set_regular",
+                        "model_set_smart",
                     ],
                 },
                 "interval_minutes": {"type": "integer"},
@@ -46,6 +59,9 @@ class AutomationTool(Tool):
                 "schedule": {"type": "string"},
                 "prompt": {"type": "string"},
                 "job_id": {"type": "integer"},
+                "model": {"type": "string"},
+                "regular_model": {"type": "string"},
+                "smart_model": {"type": "string"},
             },
             "required": ["action"],
             "additionalProperties": False,
@@ -89,6 +105,18 @@ class AutomationTool(Tool):
                 ttl_minutes=10,
             )
             return f"Telegram pairing code: {code}"
+        if action == "model_show":
+            return self._model_show()
+        if action == "model_set":
+            regular = str(kwargs.get("regular_model") or kwargs.get("model") or "").strip()
+            smart = str(kwargs.get("smart_model") or kwargs.get("model") or "").strip()
+            return self._set_models(regular_model=regular, smart_model=smart)
+        if action == "model_set_regular":
+            regular = str(kwargs.get("regular_model") or kwargs.get("model") or "").strip()
+            return self._set_models(regular_model=regular, smart_model="")
+        if action == "model_set_smart":
+            smart = str(kwargs.get("smart_model") or kwargs.get("model") or "").strip()
+            return self._set_models(regular_model="", smart_model=smart)
         return "Unsupported action."
 
     def _heartbeat_show(self) -> str:
@@ -102,3 +130,22 @@ class AutomationTool(Tool):
             f"checklist_path={self.heartbeat.checklist_path}\n"
             f"checklist:\n{content or '(empty)'}"
         )
+
+    def _set_models(self, *, regular_model: str, smart_model: str) -> str:
+        if regular_model:
+            self.llm.model = regular_model
+        if smart_model:
+            self.llm.smart_model = smart_model
+        if callable(self.on_models_updated):
+            self.on_models_updated(
+                regular_model=self.llm.model,
+                smart_model=self.llm.smart_model,
+            )
+        return (
+            "Runtime models updated.\n"
+            f"regular_model={self.llm.model}\n"
+            f"smart_model={self.llm.smart_model}"
+        )
+
+    def _model_show(self) -> str:
+        return f"regular_model={self.llm.model}\nsmart_model={self.llm.smart_model}"

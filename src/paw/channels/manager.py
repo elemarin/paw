@@ -65,3 +65,10 @@ class ChannelRuntimeManager:
     def statuses(self) -> list[ChannelStatus]:
         """Return runtime statuses for all providers."""
         return [provider.status() for provider in self.providers]
+
+    def set_models(self, *, regular_model: str, smart_model: str) -> None:
+        """Broadcast runtime model updates to providers that support it."""
+        for provider in self.providers:
+            updater = getattr(provider, "set_models", None)
+            if callable(updater):
+                updater(regular_model=regular_model, smart_model=smart_model)

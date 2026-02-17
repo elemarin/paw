@@ -59,6 +59,13 @@ class TelegramChannelProvider(ChannelProvider):
     def status(self) -> ChannelStatus:
         return self._status
 
+    def set_models(self, *, regular_model: str, smart_model: str) -> None:
+        """Update runtime model selection for this provider."""
+        if regular_model.strip():
+            self._regular_model = regular_model.strip()
+        if smart_model.strip():
+            self._smart_model = smart_model.strip()
+
     async def start(self) -> None:
         if not self.enabled:
             return
