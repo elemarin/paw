@@ -111,7 +111,7 @@ class CoderTool(Tool):
         meta = {
             "name": safe_name,
             "description": description or f"Auto-generated plugin: {name}",
-            "version": "0.1.0",
+            "version": "1.0.0",
             "author": "PAW (self-generated)",
             "entry_point": "__init__",
         }

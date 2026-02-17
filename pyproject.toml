@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "paw"
-version = "0.1.0"
+version = "1.0.0"
 description = "PAW — Personal Agent Workspace. A self-hosted AI agent that lives in its own Linux environment."
 readme = "README.md"
 requires-python = ">=3.12"

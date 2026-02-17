@@ -13,11 +13,15 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger()
 
-_DEFAULT_SOUL = """You are PAW, a personal agent workspace. You are a helpful, direct, and capable AI assistant that can execute shell commands, manage files, and build plugins to extend your own capabilities. Be concise and action-oriented."""
+_DEFAULT_SOUL = (
+    "You are PAW, a personal agent workspace. You are a helpful, direct, and capable AI "
+    "assistant that can execute shell commands, manage files, and build plugins to extend "
+    "your own capabilities. Be concise and action-oriented."
+)
 
 _MEMORY_SYSTEM_INSTRUCTIONS = """
 ===========================
-MEMORY SYSTEM
+MEMORY SYSTEM (STAGE 1)
 ===========================
 
 You have a persistent key-value memory that survives across conversations.
@@ -28,6 +32,7 @@ Available memory actions (pass these as the "action" argument):
 - recall:   Retrieve a stored value by key.
 - list:     Show all stored memory keys and values.
 - forget:   Delete a stored memory by key.
+- Legacy alias: {"action": "write_memory", "key": "...", "value": "..."} maps to remember.
 
 WHEN TO USE MEMORY:
 - The user says "remember this" or similar

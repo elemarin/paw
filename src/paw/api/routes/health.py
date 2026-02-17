@@ -35,10 +35,17 @@ async def health(request: Request) -> dict:
 
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": "1.0.0",
         "uptime_seconds": round(time.time() - _start_time, 1),
         "model": config.llm.model,
         "llm_stats": gateway.stats,
-        "plugins_loaded": len(getattr(request.app.state, "registry", {}).tools if hasattr(request.app.state, "registry") else []),
+        "plugins_loaded": len(getattr(request.app.state, "registry", {}).tools)
+        if hasattr(request.app.state, "registry")
+        else 0,
+        "heartbeat": {
+            "enabled": config.heartbeat.enabled,
+            "interval_minutes": config.heartbeat.interval_minutes,
+            "checklist_path": config.heartbeat.checklist_path,
+        },
         "channels": channels,
     }

@@ -50,6 +50,8 @@ channels:
     mode: "polling"               # "polling" or "webhook" (webhook planned next phase)
     dm_policy: "allowlist"        # "allowlist" | "open" | "disabled"
     allow_from: []                 # Telegram user IDs as strings, e.g. ["12345678"]
+    pairing_enabled: false         # Enable one-time /pair code onboarding
+    pairing_code_ttl_minutes: 10
     groups_enabled: false
     require_mention: true
     agent_mode: true
@@ -58,3 +60,9 @@ channels:
     poll_timeout_s: 25
     retry_delay_s: 3
     max_message_chars: 3500
+
+# --- Heartbeat automation ---
+heartbeat:
+  enabled: true
+  interval_minutes: 5
+  checklist_path: "/home/paw/heartbit.md"

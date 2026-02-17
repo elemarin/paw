@@ -61,6 +61,58 @@ class AgentConfig(BaseSettings):
     max_tool_calls: int = Field(default=20, gt=0, description="Max tool calls per request")
     token_budget: int = Field(default=100_000, gt=0, description="Max tokens per request")
     daily_token_budget: int = Field(default=1_000_000, gt=0, description="Daily token limit")
+    tool_models: dict[str, str] = Field(
+        default_factory=dict,
+        description="Direct tool->model overrides",
+    )
+    tool_model_profiles: dict[str, str] = Field(
+        default_factory=dict,
+        description="Named tool model profiles, e.g. regular/smart",
+    )
+    tool_profile_default: str = Field(default="", description="Default tool model profile")
+    tool_profile_by_tool: dict[str, str] = Field(
+        default_factory=dict,
+        description="Tool->profile mapping",
+    )
+
+    @field_validator("tool_models", "tool_model_profiles", "tool_profile_by_tool", mode="before")
+    @classmethod
+    def _parse_key_value_map(cls, value: Any) -> dict[str, str]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return {
+                str(k).strip(): str(v).strip()
+                for k, v in value.items()
+                if str(k).strip() and str(v).strip()
+            }
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            if text.startswith("{"):
+                import json
+
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    return {
+                        str(k).strip(): str(v).strip()
+                        for k, v in parsed.items()
+                        if str(k).strip() and str(v).strip()
+                    }
+            pairs = [item.strip() for item in text.split(",") if item.strip()]
+            mapped: dict[str, str] = {}
+            for pair in pairs:
+                key, sep, raw = pair.partition("=")
+                if not sep:
+                    continue
+                if key.strip() and raw.strip():
+                    mapped[key.strip()] = raw.strip()
+            return mapped
+        return {}
 
     model_config = SettingsConfigDict(env_prefix="PAW_AGENT_")
 
@@ -111,6 +163,8 @@ class TelegramChannelConfig(BaseSettings):
 
     dm_policy: Literal["allowlist", "open", "disabled"] = "allowlist"
     allow_from: list[str] = Field(default_factory=list)
+    pairing_enabled: bool = False
+    pairing_code_ttl_minutes: int = Field(default=10, ge=1, le=120)
     groups_enabled: bool = False
     require_mention: bool = True
 
@@ -150,6 +204,16 @@ class ChannelsConfig(BaseModel):
     telegram: TelegramChannelConfig = Field(default_factory=TelegramChannelConfig)
 
 
+class HeartbeatConfig(BaseSettings):
+    """Heartbeat and cron automation configuration."""
+
+    enabled: bool = True
+    interval_minutes: int = Field(default=5, ge=1, le=1440)
+    checklist_path: str = Field(default="/home/paw/heartbit.md")
+
+    model_config = SettingsConfigDict(env_prefix="PAW_HEARTBEAT_")
+
+
 class PawConfig(BaseSettings):
     """Root PAW configuration."""
 
@@ -172,6 +236,7 @@ class PawConfig(BaseSettings):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     shell: ShellConfig = Field(default_factory=ShellConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
+    heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
 
     # Logging
     log_level: str = Field(default="INFO")
@@ -192,6 +257,7 @@ class PawConfig(BaseSettings):
         agent_data = yaml_cfg.pop("agent", {})
         shell_data = yaml_cfg.pop("shell", {})
         channels_data = yaml_cfg.pop("channels", {})
+        heartbeat_data = yaml_cfg.pop("heartbeat", {})
 
         # Only pass YAML sub-configs if they have data;
         # otherwise let pydantic-settings pick up env vars
@@ -204,6 +270,8 @@ class PawConfig(BaseSettings):
             kwargs["shell"] = ShellConfig(**shell_data)
         if channels_data:
             kwargs["channels"] = ChannelsConfig(**channels_data)
+        if heartbeat_data:
+            kwargs["heartbeat"] = HeartbeatConfig(**heartbeat_data)
 
         return cls(**kwargs)
 

@@ -12,24 +12,24 @@
 
 ```
 
-A self-hosted AI agent that lives in its own Linux container. CLI-first. Self-building. Model-agnostic. Sandboxed.
+A self-hosted autonomous AI assistant that lives in its own Linux container. CLI-first. API-first. Telegram-ready. Model-agnostic. Sandboxed.
 
 > PAW is the core intelligence — everything else it builds for itself.
 
 ---
 
-## What is PAW?
+## What is PAW (v1.0)?
 
 PAW is a personal AI agent that:
 
 - **Lives in a full Linux container** — it has shell access, a filesystem, and networking
 - **Uses any LLM** — OpenAI, Anthropic, Google, Ollama, or any provider via [LiteLLM](https://github.com/BerriAI/litellm)
-- **Has tools** — shell execution, file management, persistent memory, self-building
+- **Has native skills** — shell execution, file management, persistent memory, automation scheduling, self-building
 - **Security-hardened** — sandboxed file access, command blocking, approval patterns, directory restrictions
 - **Dual memory system** — persistent key-value store powered by MemSearch + markdown-based memory files with rolling daily logs
 - **Has identity** — `soul.md` defines who PAW is, what it values, and how it works
-- **Builds itself** — the Coder tool lets PAW scaffold and propose new plugins
-- **Is extensible** — drop-in plugin system for adding new capabilities
+- **Builds itself** — the Coder skill lets PAW scaffold and propose extensions
+- **Is extensible** — open skill registry (native + extension-loaded skills)
 
 ## Quick Start
 
@@ -113,7 +113,22 @@ curl http://localhost:8000/v1/chat/completions \
 | **shell** | Execute commands in PAW's Linux environment — with blocked commands, approval patterns, timeout enforcement, and working-directory sandboxing |
 | **files** | Read, write, list, search, append, delete files — sandboxed to workspace/plugins/data/tmp directories only |
 | **memory** | Persistent key-value memory (MemSearch-backed) across conversations — remember, recall, forget, list |
-| **coder** | Create plugins, standalone scripts, and self-improvement proposals — with scaffolding and source introspection |
+| **coder** | Create extensions, standalone scripts, and self-improvement proposals — with scaffolding and source introspection |
+| **automation** | Manage heartbeat checks, cron jobs, and Telegram pairing-code generation |
+
+## Heartbeat + Cron (OpenClaw-style proactive automation)
+
+PAW now includes a production heartbeat scheduler:
+
+- Default cadence: **every 5 minutes**
+- Checklist file: `heartbit.md` (with `heatbit.md` alias for compatibility)
+- Cron jobs: configured and managed through the `automation` skill
+
+Example:
+
+```bash
+paw chat "Use automation action cron_add with schedule */30 * * * * to run a workspace summary"
+```
 
 ## Security Hardening
 
@@ -210,6 +225,10 @@ PAW_TELEGRAM_MODE=polling
 # Recommended for safety in production
 PAW_TELEGRAM_DM_POLICY=allowlist
 PAW_TELEGRAM_ALLOW_FROM=12345678
+
+# Optional: easier onboarding with one-time pair codes
+PAW_TELEGRAM_PAIRING_ENABLED=true
+PAW_TELEGRAM_PAIRING_CODE_TTL_MINUTES=10
 ```
 
 ### 3. Restart PAW
@@ -230,8 +249,18 @@ PAW registers Telegram bot commands on startup:
 - `/mode regular` — force regular mode
 - `/mode smart` — force smart mode
 - `/status` — show current mode and active model
+- `/pair <code>` — pair a private chat using one-time onboarding code
 
 Mode is persisted per Telegram chat session. Default mode is `regular`.
+
+### Channel status and mode API
+
+PAW now exposes unified channel controls:
+
+- `GET /v1/channels/status`
+- `GET /v1/channels/{channel}/sessions/{session_key}/mode`
+- `POST /v1/channels/{channel}/sessions/{session_key}/mode`
+- `POST /v1/channels/telegram/pair-code`
 
 ## Azure Deployment (GitHub Auto-Deploy)
 

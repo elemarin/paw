@@ -10,8 +10,8 @@ Provides:
 
 from __future__ import annotations
 
-from datetime import UTC
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -107,9 +107,37 @@ CREATE TABLE IF NOT EXISTS channel_runtime (
     PRIMARY KEY (channel, account_id)
 );
 
+CREATE TABLE IF NOT EXISTS channel_pairing_codes (
+    channel TEXT NOT NULL,
+    code TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_by TEXT,
+    used_at TEXT,
+    PRIMARY KEY (channel, code)
+);
+
+CREATE TABLE IF NOT EXISTS channel_pairings (
+    channel TEXT NOT NULL,
+    sender_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (channel, sender_id)
+);
+
+CREATE TABLE IF NOT EXISTS heartbeat_cron_jobs (
+    id BIGSERIAL PRIMARY KEY,
+    label TEXT NOT NULL,
+    schedule TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    last_run_at TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_tool_calls_conversation ON tool_calls(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_channel_dedupe_created_at ON channel_dedupe(created_at);
+CREATE INDEX IF NOT EXISTS idx_heartbeat_cron_jobs_enabled ON heartbeat_cron_jobs(enabled);
 """
 
 
@@ -207,12 +235,12 @@ class Database:
 
     async def memory_set(self, key: str, value: str) -> None:
         """Set a key-value pair in memory."""
-        from datetime import datetime
         now = datetime.now(UTC).isoformat()
         await self.execute(
             (
                 "INSERT INTO memory (key, value, created_at, updated_at) VALUES (?, ?, ?, ?) "
-                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
+                "ON CONFLICT (key) DO UPDATE SET "
+                "value = EXCLUDED.value, updated_at = EXCLUDED.updated_at"
             ),
             (key, value, now, now),
         )
@@ -273,8 +301,6 @@ class Database:
         account_id: str = "default",
     ) -> None:
         """Set last processed update offset for a channel account."""
-        from datetime import datetime
-
         now = datetime.now(UTC).isoformat()
         await self.execute(
                 """INSERT INTO channel_offsets
@@ -297,8 +323,6 @@ class Database:
 
     async def channel_dedupe_add(self, channel: str, key: str) -> None:
         """Store a dedupe key."""
-        from datetime import datetime
-
         now = datetime.now(UTC).isoformat()
         await self.execute(
                 """INSERT INTO channel_dedupe (channel, key, created_at)
@@ -337,8 +361,6 @@ class Database:
         conversation_id: str,
     ) -> None:
         """Set mapped conversation id for a channel session key."""
-        from datetime import datetime
-
         now = datetime.now(UTC).isoformat()
         await self.execute(
                 """INSERT INTO channel_sessions
@@ -363,8 +385,6 @@ class Database:
         last_outbound_at: str | None = None,
     ) -> None:
         """Insert/update runtime status for a channel."""
-        from datetime import datetime
-
         now = datetime.now(UTC).isoformat()
         await self.execute(
             """INSERT INTO channel_runtime
@@ -417,8 +437,6 @@ class Database:
 
     async def channel_session_mode_set(self, channel: str, session_key: str, mode: str) -> None:
         """Set selected mode for a channel session key."""
-        from datetime import datetime
-
         now = datetime.now(UTC).isoformat()
         await self.execute(
             """INSERT INTO channel_session_modes
@@ -429,4 +447,103 @@ class Database:
                    mode = EXCLUDED.mode,
                    updated_at = EXCLUDED.updated_at""",
             (channel, session_key, mode, now),
+        )
+
+    async def channel_pairing_code_create(
+        self,
+        *,
+        channel: str,
+        code: str,
+        ttl_minutes: int,
+    ) -> None:
+        """Create a pairing code for a channel."""
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(minutes=max(1, ttl_minutes))
+        await self.execute(
+            """INSERT INTO channel_pairing_codes
+                    (channel, code, created_at, expires_at, used_by, used_at)
+               VALUES (?, ?, ?, ?, NULL, NULL)
+               ON CONFLICT (channel, code)
+               DO UPDATE SET
+                    created_at = EXCLUDED.created_at,
+                    expires_at = EXCLUDED.expires_at,
+                    used_by = NULL,
+                    used_at = NULL""",
+            (channel, code, now.isoformat(), expires_at.isoformat()),
+        )
+
+    async def channel_pairing_claim(self, *, channel: str, code: str, sender_id: str) -> bool:
+        """Claim an existing pairing code."""
+        row = await self.fetch_one(
+            """SELECT expires_at, used_by
+               FROM channel_pairing_codes
+               WHERE channel = ? AND code = ?""",
+            (channel, code),
+        )
+        if not row or row.get("used_by"):
+            return False
+
+        try:
+            expires_at = datetime.fromisoformat(str(row["expires_at"]))
+        except Exception:
+            return False
+
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if expires_at <= datetime.now(UTC):
+            return False
+
+        now = datetime.now(UTC).isoformat()
+        result = await self.execute(
+            """UPDATE channel_pairing_codes
+               SET used_by = ?, used_at = ?
+               WHERE channel = ? AND code = ? AND used_by IS NULL""",
+            (sender_id, now, channel, code),
+        )
+        if result.rowcount <= 0:
+            return False
+
+        await self.execute(
+            """INSERT INTO channel_pairings (channel, sender_id, created_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT (channel, sender_id) DO NOTHING""",
+            (channel, sender_id, now),
+        )
+        return True
+
+    async def channel_pairing_is_allowed(self, *, channel: str, sender_id: str) -> bool:
+        """Return whether sender is paired for channel."""
+        row = await self.fetch_one(
+            "SELECT 1 FROM channel_pairings WHERE channel = ? AND sender_id = ?",
+            (channel, sender_id),
+        )
+        return bool(row)
+
+    async def heartbeat_cron_add(self, *, label: str, schedule: str, prompt: str) -> None:
+        """Add a heartbeat cron job."""
+        await self.execute(
+            """INSERT INTO heartbeat_cron_jobs
+                    (label, schedule, prompt, enabled, last_run_at, created_at)
+               VALUES (?, ?, ?, 1, NULL, ?)""",
+            (label, schedule, prompt, datetime.now(UTC).isoformat()),
+        )
+
+    async def heartbeat_cron_list(self) -> list[dict[str, Any]]:
+        """List configured heartbeat cron jobs."""
+        return await self.fetch_all(
+            """SELECT id, label, schedule, prompt, enabled, last_run_at, created_at
+               FROM heartbeat_cron_jobs
+               ORDER BY id ASC"""
+        )
+
+    async def heartbeat_cron_remove(self, *, job_id: int) -> bool:
+        """Remove a heartbeat cron job."""
+        result = await self.execute("DELETE FROM heartbeat_cron_jobs WHERE id = ?", (job_id,))
+        return result.rowcount > 0
+
+    async def heartbeat_cron_mark_run(self, *, job_id: int) -> None:
+        """Update cron job last-run timestamp."""
+        await self.execute(
+            "UPDATE heartbeat_cron_jobs SET last_run_at = ? WHERE id = ?",
+            (datetime.now(UTC).isoformat(), job_id),
         )
