@@ -15,6 +15,12 @@ param vmAdminUsername string = 'paw'
 @description('SSH public key for VM access.')
 param vmSshPublicKey string
 
+@description('Default PAW heartbeat interval in minutes for deployment env files.')
+param pawHeartbeatIntervalMinutes int = 5
+
+@description('Enable Telegram one-time pairing code onboarding in deployment env files.')
+param pawTelegramPairingEnabled bool = false
+
 var unique = toLower(uniqueString(resourceGroup().id))
 var compactPrefix = toLower(replace(namePrefix, '-', ''))
 var acrName = take('${compactPrefix}${unique}', 50)
@@ -180,3 +186,5 @@ output acrLoginServer string = acr.properties.loginServer
 output vmName string = vm.name
 output vmPublicIp string = publicIp.properties.ipAddress
 output vmSshCommand string = 'ssh ${vmAdminUsername}@${publicIp.properties.ipAddress}'
+output pawHeartbeatIntervalMinutes int = pawHeartbeatIntervalMinutes
+output pawTelegramPairingEnabled bool = pawTelegramPairingEnabled

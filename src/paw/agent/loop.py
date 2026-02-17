@@ -65,6 +65,7 @@ class AgentLoop:
         """Run the full ReAct loop until the LLM produces a final answer."""
         result = AgentResult(response="")
         tools = self.registry.to_openai_tools() or None
+        followup_tool_name: str | None = None
 
         for iteration in range(1, self.config.max_iterations + 1):
             result.iterations = iteration
@@ -85,7 +86,11 @@ class AgentLoop:
             )
             response = await self.gateway.completion(
                 messages=messages,
-                model=model,
+                model=self._resolve_iteration_model(
+                    requested_model=model,
+                    conversation=conversation,
+                    followup_tool_name=followup_tool_name,
+                ),
                 temperature=temperature,
                 max_tokens=max_tokens,
                 tools=tools,
@@ -146,6 +151,7 @@ class AgentLoop:
             # Execute each tool call
             for tc in tool_calls:
                 tool_name = tc.function.name
+                followup_tool_name = tool_name
                 tool_args_raw = tc.function.arguments
                 tool_call_id = tc.id
 
@@ -221,6 +227,43 @@ class AgentLoop:
             result.usage["total_tokens"] += response.usage.total_tokens
 
         return result
+
+    def _resolve_iteration_model(
+        self,
+        *,
+        requested_model: str | None,
+        conversation: Conversation,
+        followup_tool_name: str | None,
+    ) -> str | None:
+        if not followup_tool_name:
+            return requested_model
+
+        if followup_tool_name in self.config.tool_models:
+            return self.config.tool_models[followup_tool_name]
+
+        profile = self._resolve_profile_for_tool(conversation, followup_tool_name)
+        if profile and profile in self.config.tool_model_profiles:
+            return self.config.tool_model_profiles[profile]
+        return requested_model
+
+    def _resolve_profile_for_tool(self, conversation: Conversation, tool_name: str) -> str | None:
+        instruction = self._latest_user_instruction(conversation)
+        if "think harder" in instruction:
+            return "smart"
+        if "switch back" in instruction:
+            return "regular"
+        if tool_name in self.config.tool_profile_by_tool:
+            return self.config.tool_profile_by_tool[tool_name]
+        if self.config.tool_profile_default:
+            return self.config.tool_profile_default
+        return None
+
+    @staticmethod
+    def _latest_user_instruction(conversation: Conversation) -> str:
+        for message in reversed(conversation.messages):
+            if message.role == "user":
+                return (message.content or "").lower()
+        return ""
 
 
 def _safe_parse(raw: str) -> Any:

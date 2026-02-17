@@ -14,6 +14,7 @@ from paw.agent.loop import AgentLoop
 from paw.agent.memory import MemoryTool
 from paw.agent.soul import get_system_prompt, load_soul
 from paw.agent.tools import ToolRegistry
+from paw.automation.scheduler import AutomationScheduler
 from paw.channels.base import ChannelInboundEvent
 from paw.channels.manager import ChannelRuntimeManager
 from paw.channels.router import ChannelRouter
@@ -23,6 +24,7 @@ from paw.db.engine import Database
 from paw.extensions.loader import load_plugins
 from paw.llm.gateway import LLMGateway
 from paw.logging import setup_logging
+from paw.tools.automation import AutomationTool
 from paw.tools.files import FileTool
 from paw.tools.shell import ShellTool
 
@@ -35,7 +37,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     config = get_config()
     setup_logging(level=config.log_level, fmt=config.log_format)
 
-    logger.info("paw.starting", version="0.1.0", model=config.llm.model)
+    logger.info("paw.starting", version="1.0.0", model=config.llm.model)
 
     # Load soul (just the base text, full prompt built after memory loads)
     soul_text = load_soul(config.soul_path)
@@ -57,6 +59,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     registry.register(FileTool(config))
     registry.register(memory_tool)
     registry.register(CoderTool(config.workspace_dir, config.plugins_dir))
+    automation_tool = AutomationTool(
+        db=db,
+        heartbeat=config.heartbeat,
+        llm=config.llm,
+    )
+    registry.register(automation_tool)
 
     # Load plugins
     plugin_tools = await load_plugins(config.plugins_dir, registry)
@@ -120,6 +128,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         inbound_handler=handle_channel_inbound,
     )
     await channel_manager.start()
+    automation_tool.on_models_updated = channel_manager.set_models
+
+    async def run_automation_prompt(
+        prompt: str,
+        source: str,
+        output_target: str | None = None,
+    ) -> None:
+        target = (output_target or "").strip() or "log"
+        event = ChannelInboundEvent(
+            channel="automation",
+            session_key=f"automation:{source}:{target}",
+            sender_id="system",
+            peer_id="system",
+            text=prompt,
+            model=None,
+            agent_mode=True,
+        )
+        await handle_channel_inbound(event)
+
+    scheduler = AutomationScheduler(config=config.heartbeat, db=db, runner=run_automation_prompt)
+    await scheduler.start()
 
     # Store on app state
     app.state.config = config
@@ -132,6 +161,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.memory_tool = memory_tool
     app.state.channel_router = channel_router
     app.state.channel_manager = channel_manager
+    app.state.scheduler = scheduler
 
     logger.info(
         "paw.ready",
@@ -143,6 +173,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # Shutdown
     logger.info("paw.shutting_down")
+    await scheduler.stop()
     await channel_manager.stop()
     await db.close()
     logger.info("paw.stopped")
@@ -152,12 +183,13 @@ def create_app() -> FastAPI:
     """Create the FastAPI application."""
     app = FastAPI(
         title="PAW — Personal Agent Workspace",
-        version="0.1.0",
+        version="1.0.0",
         description="A self-hosted AI agent with its own Linux environment.",
         lifespan=lifespan,
     )
 
     # Register routes
+    from paw.api.routes.channels import router as channels_router
     from paw.api.routes.chat import router as chat_router
     from paw.api.routes.conversations import router as conversations_router
     from paw.api.routes.health import router as health_router
@@ -165,6 +197,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router, tags=["health"])
     app.include_router(chat_router, tags=["chat"])
+    app.include_router(channels_router, tags=["channels"])
     app.include_router(conversations_router, tags=["conversations"])
     app.include_router(memory_router, tags=["memory"])
 

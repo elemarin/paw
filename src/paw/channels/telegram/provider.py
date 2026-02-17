@@ -59,6 +59,13 @@ class TelegramChannelProvider(ChannelProvider):
     def status(self) -> ChannelStatus:
         return self._status
 
+    def set_models(self, *, regular_model: str, smart_model: str) -> None:
+        """Update runtime model selection for this provider."""
+        if regular_model.strip():
+            self._regular_model = regular_model.strip()
+        if smart_model.strip():
+            self._smart_model = smart_model.strip()
+
     async def start(self) -> None:
         if not self.enabled:
             return
@@ -135,6 +142,7 @@ class TelegramChannelProvider(ChannelProvider):
                 "commands": [
                     {"command": "mode", "description": "Toggle mode: regular/smart"},
                     {"command": "status", "description": "Show current model mode"},
+                    {"command": "pair", "description": "Pair this chat with a one-time code"},
                 ]
             },
         )
@@ -203,7 +211,27 @@ class TelegramChannelProvider(ChannelProvider):
         thread_id = message.get("message_thread_id")
         session_key = self._session_key(chat_id=chat_id, chat_type=chat_type, thread_id=thread_id)
 
-        if not self._allowed_sender(sender_id=sender_id, chat_type=chat_type):
+        command = self._parse_command(text)
+        if command is not None:
+            command_name, command_arg = command
+            handled, command_reply = await self._handle_command(
+                command_name=command_name,
+                command_arg=command_arg,
+                session_key=session_key,
+                sender_id=sender_id,
+                chat_type=chat_type,
+            )
+            if handled:
+                self._set_status(last_inbound_at=self._now_iso())
+                await self._send_reply(client, api_base, chat_id, command_reply, thread_id)
+                self._set_status(last_outbound_at=self._now_iso())
+                if isinstance(update_id, int):
+                    self._offset = max(self._offset, update_id + 1)
+                    await self.db.channel_offset_set("telegram", self._offset)
+                    await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
+                return
+
+        if not await self._allowed_sender(sender_id=sender_id, chat_type=chat_type):
             logger.info(
                 "channels.telegram.message_blocked",
                 reason="sender_not_allowed",
@@ -228,25 +256,11 @@ class TelegramChannelProvider(ChannelProvider):
                 await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
             return
 
-        command = self._parse_command(text)
-        if command is not None:
-            command_name, command_arg = command
-            handled, command_reply = await self._handle_command(
-                command_name=command_name,
-                command_arg=command_arg,
-                session_key=session_key,
-            )
-            if handled:
-                self._set_status(last_inbound_at=self._now_iso())
-                await self._send_reply(client, api_base, chat_id, command_reply, thread_id)
-                self._set_status(last_outbound_at=self._now_iso())
-                if isinstance(update_id, int):
-                    self._offset = max(self._offset, update_id + 1)
-                    await self.db.channel_offset_set("telegram", self._offset)
-                    await self.db.channel_dedupe_add("telegram", f"u:{update_id}")
-                return
-
-        if chat_type != "private" and self.config.require_mention and not self._has_bot_mention(text):
+        if (
+            chat_type != "private"
+            and self.config.require_mention
+            and not self._has_bot_mention(text)
+        ):
             logger.info(
                 "channels.telegram.message_blocked",
                 reason="mention_required",
@@ -314,7 +328,12 @@ class TelegramChannelProvider(ChannelProvider):
                     body=resp.text[:300],
                 )
 
-    def _allowed_sender(self, *, sender_id: str, chat_type: str) -> bool:
+    async def _allowed_sender(self, *, sender_id: str, chat_type: str) -> bool:
+        if self.config.pairing_enabled and await self.db.channel_pairing_is_allowed(
+            channel="telegram",
+            sender_id=sender_id,
+        ):
+            return True
         if chat_type == "private":
             if self.config.dm_policy == "disabled":
                 return False
@@ -380,11 +399,34 @@ class TelegramChannelProvider(ChannelProvider):
         command_name: str,
         command_arg: str,
         session_key: str,
+        sender_id: str,
+        chat_type: str,
     ) -> tuple[bool, str]:
+        if command_name == "pair":
+            if not self.config.pairing_enabled:
+                return True, "Pairing is disabled by configuration."
+            if chat_type != "private":
+                return True, "Pairing works only in private chats."
+            code = command_arg.strip().upper()
+            if not code:
+                return True, "Usage: /pair <code>"
+            ok = await self.db.channel_pairing_claim(
+                channel="telegram",
+                code=code,
+                sender_id=sender_id,
+            )
+            if ok:
+                return True, "Pairing complete. You can now chat with PAW."
+            return True, "Invalid or expired pairing code."
+
         if command_name == "status":
             stored_mode = await self.db.channel_session_mode_get("telegram", session_key)
-            selected_mode = stored_mode if stored_mode in {REGULAR_MODE, SMART_MODE} else REGULAR_MODE
-            selected_model = self._smart_model if selected_mode == SMART_MODE else self._regular_model
+            selected_mode = (
+                stored_mode if stored_mode in {REGULAR_MODE, SMART_MODE} else REGULAR_MODE
+            )
+            selected_model = (
+                self._smart_model if selected_mode == SMART_MODE else self._regular_model
+            )
             return (
                 True,
                 (

@@ -35,7 +35,7 @@ class PawPlugin(ABC):
     @property
     def version(self) -> str:
         """Plugin version."""
-        return "0.1.0"
+        return "1.0.0"
 
     async def on_load(self, registry: ToolRegistry, db: Database | None = None) -> list[Tool]:
         """Called when the plugin is loaded. Register tools here.
