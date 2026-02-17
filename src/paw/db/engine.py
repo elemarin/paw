@@ -129,6 +129,7 @@ CREATE TABLE IF NOT EXISTS heartbeat_cron_jobs (
     label TEXT NOT NULL,
     schedule TEXT NOT NULL,
     prompt TEXT NOT NULL,
+    output_target TEXT,
     enabled INTEGER NOT NULL DEFAULT 1,
     last_run_at TEXT,
     created_at TEXT NOT NULL
@@ -166,6 +167,17 @@ class Database:
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(SCHEMA)
+            column_exists = await conn.fetchval(
+                """SELECT EXISTS (
+                       SELECT 1
+                       FROM information_schema.columns
+                       WHERE table_name = 'heartbeat_cron_jobs'
+                         AND table_schema = current_schema()
+                         AND column_name = 'output_target'
+                   )"""
+            )
+            if not column_exists:
+                await conn.execute("ALTER TABLE heartbeat_cron_jobs ADD COLUMN output_target TEXT")
         logger.info("db.initialized", backend="postgresql")
 
     async def close(self) -> None:
@@ -519,19 +531,26 @@ class Database:
         )
         return bool(row)
 
-    async def heartbeat_cron_add(self, *, label: str, schedule: str, prompt: str) -> None:
+    async def heartbeat_cron_add(
+        self,
+        *,
+        label: str,
+        schedule: str,
+        prompt: str,
+        output_target: str | None = None,
+    ) -> None:
         """Add a heartbeat cron job."""
         await self.execute(
             """INSERT INTO heartbeat_cron_jobs
-                    (label, schedule, prompt, enabled, last_run_at, created_at)
-               VALUES (?, ?, ?, 1, NULL, ?)""",
-            (label, schedule, prompt, datetime.now(UTC).isoformat()),
+                    (label, schedule, prompt, output_target, enabled, last_run_at, created_at)
+               VALUES (?, ?, ?, ?, 1, NULL, ?)""",
+            (label, schedule, prompt, output_target, datetime.now(UTC).isoformat()),
         )
 
     async def heartbeat_cron_list(self) -> list[dict[str, Any]]:
         """List configured heartbeat cron jobs."""
         return await self.fetch_all(
-            """SELECT id, label, schedule, prompt, enabled, last_run_at, created_at
+            """SELECT id, label, schedule, prompt, output_target, enabled, last_run_at, created_at
                FROM heartbeat_cron_jobs
                ORDER BY id ASC"""
         )

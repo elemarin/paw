@@ -123,18 +123,28 @@ PAW now includes a production heartbeat scheduler:
 - Default cadence: **every 5 minutes**
 - Checklist file: `heartbit.md`
 - Cron jobs: configured and managed through the `automation` skill
+- Output routing: every cron item requires an explicit `output_target` (for multi-channel future-proofing)
 
-Example:
+Natural language examples:
 
 ```bash
-paw chat "Use automation action cron_add with schedule */30 * * * * to run a workspace summary"
+paw chat "Do a summary of my workspace every 30 mins and send it to telegram:default"
+paw chat "Check my repo health every hour and send updates to email:ops"
+paw chat "Add a heartbeat item to check pending TODOs and send results to telegram:default"
 ```
 
 Switch models/providers on the fly (OpenAI, Azure, Ollama, etc.) with the same skill:
 
 ```bash
-paw chat "Use automation action model_set with model ollama/llama3.1"
+paw chat "Switch my regular and smart models to ollama/llama3.1"
 ```
+
+### How heartbeat outputs are communicated
+
+- By design, PAW does **not** hardcode Telegram as default for all automations.
+- Heartbeat/cron items should define an explicit `output_target` (for example `telegram:default`, `email:ops`).
+- If a schedule request is missing an `output_target`, PAW asks you to specify one.
+- This keeps routing channel-agnostic so future channels can be added without reworking scheduler logic.
 
 ## Security Hardening
 

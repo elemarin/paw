@@ -210,6 +210,10 @@ class HeartbeatConfig(BaseSettings):
     enabled: bool = True
     interval_minutes: int = Field(default=5, ge=1, le=1440)
     checklist_path: str = Field(default="/home/paw/heartbit.md")
+    default_output_target: str = Field(
+        default="",
+        description="Optional default output target, e.g. telegram:default or email:ops",
+    )
 
     model_config = SettingsConfigDict(env_prefix="PAW_HEARTBEAT_")
 

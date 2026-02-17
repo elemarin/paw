@@ -130,10 +130,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await channel_manager.start()
     automation_tool.on_models_updated = channel_manager.set_models
 
-    async def run_automation_prompt(prompt: str, source: str) -> None:
+    async def run_automation_prompt(
+        prompt: str,
+        source: str,
+        output_target: str | None = None,
+    ) -> None:
+        target = (output_target or "").strip() or "log"
         event = ChannelInboundEvent(
             channel="automation",
-            session_key=f"automation:{source}",
+            session_key=f"automation:{source}:{target}",
             sender_id="system",
             peer_id="system",
             text=prompt,

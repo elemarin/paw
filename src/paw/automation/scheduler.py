@@ -14,7 +14,8 @@ from paw.db.engine import Database
 
 logger = structlog.get_logger()
 
-PromptRunner = Callable[[str, str], Awaitable[None]]
+# PromptRunner arguments: (prompt_text, source_name, output_target)
+PromptRunner = Callable[[str, str, str | None], Awaitable[None]]
 
 
 class AutomationScheduler:
@@ -62,7 +63,11 @@ class AutomationScheduler:
 
         checklist = _load_checklist(self.config.checklist_path)
         if checklist:
-            await self.runner(f"[HEARTBEAT]\n{checklist}", "heartbeat")
+            await self.runner(
+                f"[HEARTBEAT]\n{checklist}",
+                "heartbeat",
+                self.config.default_output_target.strip() or None,
+            )
             logger.info("automation.heartbeat.ran", minute=minute_bucket)
         self._last_heartbeat_minute = minute_bucket
 
@@ -75,7 +80,11 @@ class AutomationScheduler:
                 continue
             if not _cron_matches(str(job["schedule"]), now):
                 continue
-            await self.runner(f"[CRON:{job['label']}]\n{job['prompt']}", "cron")
+            await self.runner(
+                f"[CRON:{job['label']}]\n{job['prompt']}",
+                "cron",
+                str(job.get("output_target") or "").strip() or None,
+            )
             await self.db.heartbeat_cron_mark_run(job_id=job_id)
             self._last_cron_minute[job_id] = minute_bucket
             logger.info("automation.cron.ran", job_id=job_id, label=job["label"])

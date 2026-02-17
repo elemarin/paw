@@ -66,3 +66,4 @@ heartbeat:
   enabled: true
   interval_minutes: 5
   checklist_path: "/home/paw/heartbit.md"
+  default_output_target: ""      # Optional fallback, e.g. "telegram:default"
