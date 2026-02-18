@@ -212,7 +212,7 @@ paw chat "Search the web for the latest FastAPI release notes"
 ```bash
 PAW_LLM__API_KEY=sk-...          # Your LLM API key
 PAW_LLM__MODEL=openai/gpt-4o-mini  # Model to use
-PAW_LLM__SMART_MODEL=openai/gpt-4o  # Smart mode model
+PAW_LLM__SMART_MODEL=openai/gpt-5.2  # Smart mode model
 PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
 PAW_API_KEY=change-me-strong-key  # Required for API access
 PAW_BRAVE_API_KEY=...             # Optional: enables Brave web search plugin

@@ -38,7 +38,7 @@ class LLMConfig(BaseSettings):
 
     model: str = Field(default="openai/gpt-4o-mini", description="LiteLLM model identifier")
     smart_model: str = Field(
-        default="openai/gpt-4o",
+        default="openai/gpt-5.2",
         description="LiteLLM model used when smart mode is enabled",
     )
     api_key: str = Field(default="", description="API key for the LLM provider")

@@ -14,4 +14,4 @@ def test_allow_from_parses_json_list_string() -> None:
 
 def test_llm_smart_model_default() -> None:
     cfg = LLMConfig()
-    assert cfg.smart_model == "openai/gpt-4o"
+    assert cfg.smart_model == "openai/gpt-5.2"
