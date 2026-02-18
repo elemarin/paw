@@ -38,7 +38,7 @@ class _DummyDB:
         return True
 
 def test_automation_model_set_updates_runtime_config() -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.3-codex")
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     tool = AutomationTool(db=_DummyDB(), heartbeat=HeartbeatConfig(), llm=llm)
 
     result = asyncio.run(tool.execute(action="model_set", model="ollama/llama3.1"))
@@ -49,17 +49,17 @@ def test_automation_model_set_updates_runtime_config() -> None:
 
 
 def test_automation_model_set_regular_keeps_smart_model() -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.3-codex")
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     tool = AutomationTool(db=_DummyDB(), heartbeat=HeartbeatConfig(), llm=llm)
 
     asyncio.run(tool.execute(action="model_set_regular", model="azure/gpt-4.1-mini"))
 
     assert llm.model == "azure/gpt-4.1-mini"
-    assert llm.smart_model == "openai/gpt-5.3-codex"
+    assert llm.smart_model == "openai/gpt-5.2"
 
 
 def test_automation_heartbeat_item_requires_output_target(tmp_path) -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.3-codex")
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     heartbeat = HeartbeatConfig(checklist_path=str(tmp_path / "heartbit.md"))
     tool = AutomationTool(db=_DummyDB(), heartbeat=heartbeat, llm=llm)
 
@@ -69,7 +69,7 @@ def test_automation_heartbeat_item_requires_output_target(tmp_path) -> None:
 
 
 def test_automation_heartbeat_item_add_edit_remove(tmp_path) -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.3-codex")
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     heartbeat = HeartbeatConfig(checklist_path=str(tmp_path / "heartbit.md"))
     tool = AutomationTool(db=_DummyDB(), heartbeat=heartbeat, llm=llm)
 
@@ -96,7 +96,7 @@ def test_automation_heartbeat_item_add_edit_remove(tmp_path) -> None:
 
 
 def test_automation_cron_add_requires_output_target() -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.3-codex")
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     db = _DummyDB()
     tool = AutomationTool(db=db, heartbeat=HeartbeatConfig(), llm=llm)
 
@@ -129,7 +129,7 @@ def test_heartbeat_items_ignores_non_list_lines(tmp_path) -> None:
         encoding="utf-8",
     )
 
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.3-codex")
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     heartbeat = HeartbeatConfig(checklist_path=str(path))
     tool = AutomationTool(db=_DummyDB(), heartbeat=heartbeat, llm=llm)
 

@@ -50,7 +50,7 @@ async def test_telegram_mode_toggle_switches_model_for_chat() -> None:
         db=db,
         inbound_handler=inbound_handler,
         default_model="openai/gpt-5-mini",
-        default_smart_model="openai/gpt-5.3-codex",
+        default_smart_model="openai/gpt-5.2",
     )
 
     client = _FakeClient()
@@ -100,6 +100,6 @@ async def test_telegram_mode_toggle_switches_model_for_chat() -> None:
         },
     )
 
-    assert captured_models == ["openai/gpt-5.3-codex"]
+    assert captured_models == ["openai/gpt-5.2"]
 
     await db.close()
