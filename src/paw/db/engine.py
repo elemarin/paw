@@ -385,6 +385,18 @@ class Database:
             (channel, session_key, conversation_id, now),
         )
 
+    async def channel_session_latest_key(self, channel: str) -> str | None:
+        """Return the most recently updated session key for a channel."""
+        row = await self.fetch_one(
+            """SELECT session_key
+               FROM channel_sessions
+               WHERE channel = ?
+               ORDER BY updated_at DESC
+               LIMIT 1""",
+            (channel,),
+        )
+        return str(row["session_key"]) if row and row.get("session_key") else None
+
     async def channel_runtime_upsert(
         self,
         *,

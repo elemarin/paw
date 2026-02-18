@@ -65,5 +65,17 @@ channels:
 heartbeat:
   enabled: true
   interval_minutes: 5
-  checklist_path: "/home/paw/heartbit.md"
-  default_output_target: ""      # Optional fallback, e.g. "telegram:default"
+  checklist_path: "/home/paw/heartbeat.md"
+  default_output_target: ""      # Optional fallback, e.g. "telegram"
+
+# --- Internal hooks ---
+hooks:
+  model_changed_targets: []
+  model_changed_webhooks: []
+
+# --- Webhooks ---
+webhooks:
+  enabled: true
+  inbound_enabled: true
+  inbound_secret: ""
+  outbound_timeout_s: 10

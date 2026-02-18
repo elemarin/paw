@@ -11,8 +11,6 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from paw.api.middleware.auth import verify_api_key
-from paw.agent.soul import get_system_prompt
-
 logger = structlog.get_logger()
 
 router = APIRouter()
@@ -68,88 +66,33 @@ async def chat_completions(
 ) -> ChatResponse | StreamingResponse:
     """Chat completion endpoint. Supports agent mode with tool calling."""
     config = request.app.state.config
-    gateway = request.app.state.gateway
-    agent = request.app.state.agent
-    conversations = request.app.state.conversations
-    memory_tool = request.app.state.memory_tool
+    event_gateway = request.app.state.event_gateway
     selected_model = _resolve_model(
         config=config,
         requested_model=body.model,
         smart_mode=body.smart_mode,
     )
 
-    # Get or create conversation
-    conv_id = body.conversation_id or str(uuid.uuid4())
-    conversation = conversations.get_or_create(conv_id)
+    processed = await event_gateway.handle_chat_messages(
+        conversation_id=body.conversation_id,
+        messages=[(msg.role, msg.content or "") for msg in body.messages],
+        model=selected_model,
+        temperature=body.temperature,
+        max_tokens=body.max_tokens,
+        agent_mode=body.agent_mode,
+    )
 
-    # Refresh the system message with current DB memories
-    fresh_soul = get_system_prompt(config.soul_path, memory_tool=memory_tool)
-    if conversation.messages and conversation.messages[0].role == "system":
-        conversation.messages[0].content = fresh_soul
-    elif not conversation.messages:
-        conversation.add_message("system", fresh_soul)
-
-    # Add user message(s)
-    for msg in body.messages:
-        conversation.add_message(msg.role, msg.content or "")
-
-    if body.agent_mode:
-        # Run the full agent loop (think → act → observe → repeat)
-        result = await agent.run(
-            conversation=conversation,
-            model=selected_model,
-            temperature=body.temperature,
-            max_tokens=body.max_tokens,
-        )
-
-        # Persist conversation to DB
-        await conversations.save_conversation(conversation)
-
-        return ChatResponse(
-            id=f"paw-{uuid.uuid4().hex[:8]}",
-            model=selected_model,
-            conversation_id=conv_id,
-            choices=[
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": result.response},
-                    "finish_reason": result.finish_reason,
-                }
-            ],
-            usage=result.usage,
-            tool_calls_made=result.tool_calls_made,
-        )
-    else:
-        # Simple proxy mode — no agent loop, just LLM
-        messages = [{"role": m.role, "content": m.content} for m in conversation.messages]
-        response = await gateway.completion(
-            messages=messages,
-            model=selected_model,
-            temperature=body.temperature,
-            max_tokens=body.max_tokens,
-        )
-
-        content = response.choices[0].message.content
-        conversation.add_message("assistant", content)
-
-        # Persist conversation to DB
-        await conversations.save_conversation(conversation)
-
-        return ChatResponse(
-            id=f"paw-{uuid.uuid4().hex[:8]}",
-            model=selected_model,
-            conversation_id=conv_id,
-            choices=[
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": content},
-                    "finish_reason": response.choices[0].finish_reason,
-                }
-            ],
-            usage={
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            } if response.usage else None,
-            tool_calls_made=0,
-        )
+    return ChatResponse(
+        id=f"paw-{uuid.uuid4().hex[:8]}",
+        model=processed.model,
+        conversation_id=processed.conversation_id,
+        choices=[
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": processed.response_text},
+                "finish_reason": processed.finish_reason,
+            }
+        ],
+        usage=processed.usage,
+        tool_calls_made=processed.tool_calls_made,
+    )

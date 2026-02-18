@@ -35,6 +35,8 @@ Runtime model:
 
 ## 3) GitHub setup (required once)
 
+If you already have a local `.env`, run `paw wizard` first. It updates `.env` from `.env.example` and generates `workspace/setup/apply-github-config.ps1` with `gh secret set` + `gh variable set` commands.
+
 ### Repository variables
 
 - `AZURE_RESOURCE_GROUP` (example: `rg-paw-dev`)
@@ -81,3 +83,22 @@ paw chat "hello from cloud"
 
 - The default NSG opens ports `22` and `8000` to the internet; restrict source IP ranges for production.
 - Add automated backups for `/opt/paw/postgres` and `/opt/paw/data`.
+
+## 7) Recreate from scratch (delete RG + redeploy Bicep)
+
+Use the included script when you want a clean infra reset:
+
+```powershell
+pwsh ./scripts/azure-redeploy.ps1 `
+  -ResourceGroup rg-paw-dev `
+  -Location eastus `
+  -NamePrefix pawdev `
+  -VmSshPublicKeyPath $HOME/.ssh/id_rsa.pub `
+  -DeleteFirst
+```
+
+This will:
+
+1. Delete the resource group (if it exists and `-DeleteFirst` is passed)
+2. Recreate the resource group
+3. Re-deploy `infra/azure/main.bicep`

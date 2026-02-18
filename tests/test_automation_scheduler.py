@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime
 
-from paw.automation.scheduler import _cron_matches
+from paw.automation.scheduler import _cron_matches, _load_heartbeat_items
 from paw.config import HeartbeatConfig, LLMConfig
 from paw.tools.automation import AutomationTool, _parse_heartbeat_item
 
@@ -37,6 +37,48 @@ class _DummyDB:
     async def heartbeat_cron_remove(self, **kwargs):
         return True
 
+
+def test_load_heartbeat_items_parses_output_targets(tmp_path) -> None:
+    path = tmp_path / "heartbeat.md"
+    path.write_text(
+        "# heading\n"
+        "- check channels | output=telegram\n"
+        "- summarize todos\n",
+        encoding="utf-8",
+    )
+
+    items = _load_heartbeat_items(str(path))
+    assert items == [
+        ("check channels", "telegram"),
+        ("summarize todos", None),
+    ]
+
+def test_automation_model_set_emits_runtime_hook() -> None:
+    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
+    emitted: list[tuple[str, dict]] = []
+
+    async def _hook(name: str, payload: dict) -> None:
+        emitted.append((name, payload))
+
+    tool = AutomationTool(
+        db=_DummyDB(),
+        heartbeat=HeartbeatConfig(),
+        llm=llm,
+        on_runtime_event=_hook,
+    )
+
+    asyncio.run(tool.execute(action="model_set", model="ollama/llama3.1"))
+
+    assert emitted == [
+        (
+            "model_changed",
+            {
+                "regular_model": "ollama/llama3.1",
+                "smart_model": "ollama/llama3.1",
+            },
+        )
+    ]
+
 def test_automation_model_set_updates_runtime_config() -> None:
     llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
     tool = AutomationTool(db=_DummyDB(), heartbeat=HeartbeatConfig(), llm=llm)
@@ -49,7 +91,7 @@ def test_automation_model_set_updates_runtime_config() -> None:
 
 
 def test_automation_model_set_regular_keeps_smart_model() -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
+    llm = LLMConfig(model="openai/gpt-5-mini", smart_model="openai/gpt-5.2")
     tool = AutomationTool(db=_DummyDB(), heartbeat=HeartbeatConfig(), llm=llm)
 
     asyncio.run(tool.execute(action="model_set_regular", model="azure/gpt-4.1-mini"))
@@ -59,8 +101,8 @@ def test_automation_model_set_regular_keeps_smart_model() -> None:
 
 
 def test_automation_heartbeat_item_requires_output_target(tmp_path) -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
-    heartbeat = HeartbeatConfig(checklist_path=str(tmp_path / "heartbit.md"))
+    llm = LLMConfig(model="openai/gpt-5-mini", smart_model="openai/gpt-5.2")
+    heartbeat = HeartbeatConfig(checklist_path=str(tmp_path / "heartbeat.md"))
     tool = AutomationTool(db=_DummyDB(), heartbeat=heartbeat, llm=llm)
 
     result = asyncio.run(tool.execute(action="heartbeat_add_item", text="summarize workspace"))
@@ -69,15 +111,15 @@ def test_automation_heartbeat_item_requires_output_target(tmp_path) -> None:
 
 
 def test_automation_heartbeat_item_add_edit_remove(tmp_path) -> None:
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
-    heartbeat = HeartbeatConfig(checklist_path=str(tmp_path / "heartbit.md"))
+    llm = LLMConfig(model="openai/gpt-5-mini", smart_model="openai/gpt-5.2")
+    heartbeat = HeartbeatConfig(checklist_path=str(tmp_path / "heartbeat.md"))
     tool = AutomationTool(db=_DummyDB(), heartbeat=heartbeat, llm=llm)
 
     add_result = asyncio.run(
         tool.execute(
             action="heartbeat_add_item",
             text="summarize workspace",
-            output_target="telegram:default",
+            output_target="telegram",
         )
     )
     edit_result = asyncio.run(
@@ -85,7 +127,7 @@ def test_automation_heartbeat_item_add_edit_remove(tmp_path) -> None:
             action="heartbeat_edit_item",
             index=1,
             text="summarize workspace deeply",
-            output_target="email:ops",
+            output_target="email",
         )
     )
     remove_result = asyncio.run(tool.execute(action="heartbeat_remove_item", index=1))
@@ -115,23 +157,23 @@ def test_automation_cron_add_requires_output_target() -> None:
 
 def test_parse_heartbeat_item_handles_output_and_extra_fields() -> None:
     text, output = _parse_heartbeat_item(
-        "- summarize workspace | priority=high | output=telegram:default"
+        "- summarize workspace | priority=high | output=telegram"
     )
     assert text == "summarize workspace"
-    assert output == "telegram:default"
+    assert output == "telegram"
 
 
 def test_heartbeat_items_ignores_non_list_lines(tmp_path) -> None:
-    path = tmp_path / "heartbit.md"
+    path = tmp_path / "heartbeat.md"
     path.write_text(
         "# Heading\n\nnot an item\n* another bullet style\n"
-        "- valid one | output=telegram:default\n  \n- valid two\n",
+        "- valid one | output=telegram\n  \n- valid two\n",
         encoding="utf-8",
     )
 
-    llm = LLMConfig(model="openai/gpt-4o-mini", smart_model="openai/gpt-5.2")
+    llm = LLMConfig(model="openai/gpt-5-mini", smart_model="openai/gpt-5.2")
     heartbeat = HeartbeatConfig(checklist_path=str(path))
     tool = AutomationTool(db=_DummyDB(), heartbeat=heartbeat, llm=llm)
 
     items = tool._heartbeat_items()
-    assert items == ["- valid one | output=telegram:default", "- valid two"]
+    assert items == ["- valid one | output=telegram", "- valid two"]

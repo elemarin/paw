@@ -30,7 +30,6 @@ PAW is a personal AI agent that:
 - **Has identity** — `soul.md` defines who PAW is, what it values, and how it works
 - **Builds itself** — the Coder skill lets PAW scaffold and propose extensions
 - **Is extensible** — open skill registry (native + extension-loaded skills)
-
 ## Quick Start
 
 ### 1. Clone & Configure
@@ -40,6 +39,9 @@ git clone <your-repo-url> paw
 cd paw
 cp .env.example .env
 # Edit .env — add your LLM API key
+
+# interactive bootstrap
+paw wizard
 ```
 
 ### 2. Run with Docker
@@ -121,16 +123,16 @@ curl http://localhost:8000/v1/chat/completions \
 PAW now includes a production heartbeat scheduler:
 
 - Default cadence: **every 5 minutes**
-- Checklist file: `heartbit.md`
+- Checklist file: `heartbeat.md`
 - Cron jobs: configured and managed through the `automation` skill
-- Output routing: every cron item requires an explicit `output_target` (for multi-channel future-proofing)
+- Output routing: every cron item requires an explicit `output_target` (e.g. `telegram` or `email`)
 
 Natural language examples:
 
 ```bash
-paw chat "Do a summary of my workspace every 30 mins and send it to telegram:default"
-paw chat "Check my repo health every hour and send updates to email:ops"
-paw chat "Add a heartbeat item to check pending TODOs and send results to telegram:default"
+paw chat "Do a summary of my workspace every 30 mins and send it to telegram"
+paw chat "Check my repo health every hour and send updates to email"
+paw chat "Add a heartbeat item to check pending TODOs and send results to telegram"
 ```
 
 Switch models/providers on the fly (OpenAI, Azure, Ollama, etc.) with the same skill:
@@ -142,7 +144,7 @@ paw chat "Switch my regular and smart models to ollama/llama3.1"
 ### How heartbeat outputs are communicated
 
 - By design, PAW does **not** hardcode Telegram as default for all automations.
-- Heartbeat/cron items should define an explicit `output_target` (for example `telegram:default`, `email:ops`).
+- Heartbeat/cron items should define an explicit `output_target` (for example `telegram` or `email`).
 - If a schedule request is missing an `output_target`, PAW asks you to specify one.
 - This keeps routing channel-agnostic so future channels can be added without reworking scheduler logic.
 
@@ -277,6 +279,14 @@ PAW now exposes unified channel controls:
 - `GET /v1/channels/{channel}/sessions/{session_key}/mode`
 - `POST /v1/channels/{channel}/sessions/{session_key}/mode`
 - `POST /v1/channels/telegram/pair-code`
+
+### Webhooks (inbound)
+
+PAW now includes a first-class inbound webhook endpoint that enters the same gateway as channel/API traffic:
+
+- `POST /v1/webhooks/inbound`
+- Optional secret header: `X-Paw-Webhook-Secret` (set `PAW_WEBHOOK_INBOUND_SECRET`)
+- Supported event types: `user_message`, `heartbeat`, `cron`, `hook`, `webhook`
 
 ## Azure Deployment (GitHub Auto-Deploy)
 

@@ -101,6 +101,69 @@ class TelegramChannelProvider(ChannelProvider):
                 pass
         self._set_status(running=False)
 
+    async def send_system_message(self, text: str) -> bool:
+        """Send runtime output to Telegram using default routing."""
+        if not self.enabled:
+            return False
+
+        chat_id_raw = (self.config.default_chat_id or "").strip()
+        if not chat_id_raw:
+            chat_id_raw = await self._resolve_default_destination_from_sessions()
+        if not chat_id_raw:
+            logger.warning("channels.telegram.send_runtime_missing_chat")
+            return False
+
+        chat_part, _, thread_part = chat_id_raw.partition("/")
+        if not chat_part.strip():
+            logger.warning("channels.telegram.send_runtime_invalid_chat")
+            return False
+
+        thread_id: str | None = thread_part.strip() or None
+        api_base = f"https://api.telegram.org/bot{self.config.bot_token.strip()}"
+        timeout = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=10.0)
+
+        sent_any = False
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for chunk in self._chunk_text(text):
+                payload: dict[str, Any] = {
+                    "chat_id": chat_part.strip(),
+                    "text": chunk,
+                    "disable_web_page_preview": True,
+                }
+                if thread_id:
+                    payload["message_thread_id"] = thread_id
+                response = await client.post(f"{api_base}/sendMessage", json=payload)
+                if response.status_code >= 400:
+                    logger.warning(
+                        "channels.telegram.send_runtime_failed",
+                        status_code=response.status_code,
+                        body=response.text[:300],
+                        chat_id=chat_part.strip(),
+                    )
+                    return False
+                sent_any = True
+        if sent_any:
+            self._set_status(last_outbound_at=self._now_iso())
+        return sent_any
+
+    async def _resolve_default_destination_from_sessions(self) -> str:
+        session_key = await self.db.channel_session_latest_key("telegram")
+        if not session_key:
+            return ""
+
+        parts = session_key.split(":")
+        if len(parts) >= 2 and parts[0] == "telegram" and parts[1] != "group":
+            return parts[1]
+
+        if len(parts) >= 4 and parts[0] == "telegram" and parts[1] == "group":
+            chat_id = parts[2]
+            if len(parts) >= 5 and parts[3] == "thread":
+                thread_id = parts[4]
+                if thread_id:
+                    return f"{chat_id}/{thread_id}"
+            return chat_id
+        return ""
+
     async def _poll_loop(self) -> None:
         api_base = f"https://api.telegram.org/bot{self.config.bot_token.strip()}"
         timeout = httpx.Timeout(

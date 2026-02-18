@@ -16,6 +16,27 @@ logger = structlog.get_logger()
 InboundHandler = Callable[[ChannelInboundEvent], Awaitable[str]]
 
 
+def _parse_output_target(target: str) -> str | None:
+    normalized = (target or "").strip()
+    if not normalized:
+        return None
+
+    if ":" in normalized:
+        channel, _, _destination = normalized.partition(":")
+        channel_name = channel.strip().lower()
+        logger.info(
+            "channels.output_target.qualifier_ignored",
+            target=normalized,
+            normalized_channel=channel_name,
+        )
+    else:
+        channel_name = normalized.strip().lower()
+
+    if not channel_name:
+        return None
+    return channel_name
+
+
 class ChannelRuntimeManager:
     """Owns lifecycle and status of all enabled channel providers."""
 
@@ -72,3 +93,24 @@ class ChannelRuntimeManager:
             updater = getattr(provider, "set_models", None)
             if callable(updater):
                 updater(regular_model=regular_model, smart_model=smart_model)
+
+    async def dispatch_output_target(self, target: str, text: str) -> bool:
+        """Dispatch channel output target to provider runtime."""
+        channel_name = _parse_output_target(target)
+        if not channel_name:
+            return False
+
+        for provider in self.providers:
+            if provider.name.lower() != channel_name:
+                continue
+            try:
+                return await provider.send_system_message(text)
+            except Exception as exc:
+                logger.warning(
+                    "channels.provider.dispatch_failed",
+                    provider=provider.name,
+                    target=target,
+                    error=str(exc),
+                )
+                return False
+        return False

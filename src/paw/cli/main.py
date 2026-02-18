@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 
 import httpx
 import typer
@@ -25,6 +26,21 @@ DEFAULT_URL = "http://localhost:8000"
 
 # File to persist the last conversation ID for --last
 _LAST_CONV_FILE = ".paw_last_conversation"
+
+_WIZARD_SECRET_MAP = {
+    "PAW_LLM_API_KEY": "PAW_LLM__API_KEY",
+    "PAW_API_KEY": "PAW_API_KEY",
+    "PAW_TELEGRAM_BOT_TOKEN": "PAW_TELEGRAM_BOT_TOKEN",
+}
+
+_WIZARD_VAR_MAP = {
+    "PAW_TELEGRAM_DM_POLICY": "PAW_TELEGRAM_DM_POLICY",
+    "PAW_TELEGRAM_ALLOW_FROM": "PAW_TELEGRAM_ALLOW_FROM",
+    "AZURE_RESOURCE_GROUP": "AZURE_RESOURCE_GROUP",
+    "AZURE_LOCATION": "AZURE_LOCATION",
+    "AZURE_NAME_PREFIX": "AZURE_NAME_PREFIX",
+    "AZURE_VM_ADMIN_USERNAME": "AZURE_VM_ADMIN_USERNAME",
+}
 
 
 def _get_client(base_url: str, api_key: str | None) -> httpx.Client:
@@ -53,6 +69,36 @@ def _load_last_conversation() -> str | None:
     except Exception:
         pass
     return None
+
+
+def _parse_env_file(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    values: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _merge_template_env(template_lines: list[str], values: dict[str, str]) -> str:
+    output: list[str] = []
+    for raw in template_lines:
+        line = raw.rstrip("\n")
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            output.append(line)
+            continue
+        key, _, current = line.partition("=")
+        env_key = key.strip()
+        if env_key in values and values[env_key] != "":
+            output.append(f"{env_key}={values[env_key]}")
+        else:
+            output.append(f"{env_key}={current}")
+    return "\n".join(output).rstrip() + "\n"
 
 
 @app.command()
@@ -341,6 +387,78 @@ def version() -> None:
     """Show PAW version."""
     from paw import __version__
     console.print(f"🐾 PAW v{__version__}")
+
+
+@app.command()
+def wizard(
+    env_file: str = typer.Option(".env", "--env-file", help="Target env file"),
+    template_file: str = typer.Option(".env.example", "--template", help="Template env file"),
+    force: bool = typer.Option(False, "--force", help="Overwrite target env file without prompt"),
+    github_script: str = typer.Option(
+        "workspace/setup/apply-github-config.ps1",
+        "--github-script",
+        help="Path to generated GitHub bootstrap script",
+    ),
+) -> None:
+    """Bootstrap .env and generate GitHub secrets/variables helper script."""
+    template_path = Path(template_file)
+    target_path = Path(env_file)
+
+    if not template_path.exists():
+        console.print(f"[red]Template not found:[/red] {template_path}")
+        raise typer.Exit(1)
+
+    if target_path.exists() and not force:
+        proceed = typer.confirm(f"{target_path} exists. Update it from template and keep existing values?")
+        if not proceed:
+            raise typer.Exit(0)
+
+    template_lines = template_path.read_text(encoding="utf-8").splitlines()
+    values = _parse_env_file(target_path)
+
+    prompts = [
+        "PAW_LLM__API_KEY",
+        "PAW_LLM__MODEL",
+        "PAW_LLM__SMART_MODEL",
+        "PAW_API_KEY",
+        "PAW_TELEGRAM_BOT_TOKEN",
+        "PAW_TELEGRAM_DEFAULT_CHAT_ID",
+        "AZURE_RESOURCE_GROUP",
+        "AZURE_LOCATION",
+        "AZURE_NAME_PREFIX",
+        "AZURE_VM_ADMIN_USERNAME",
+    ]
+    for key in prompts:
+        existing = values.get(key, "")
+        entered = typer.prompt(f"{key}", default=existing, show_default=bool(existing))
+        values[key] = entered.strip()
+
+    rendered = _merge_template_env(template_lines, values)
+    target_path.write_text(rendered, encoding="utf-8")
+    console.print(f"[green]✓[/green] Wrote {target_path}")
+
+    script_path = Path(github_script)
+    script_path.parent.mkdir(parents=True, exist_ok=True)
+
+    script_lines = [
+        "$ErrorActionPreference = 'Stop'",
+        "if (-not (Get-Command gh -ErrorAction SilentlyContinue)) { throw 'GitHub CLI (gh) is required.' }",
+        "",
+    ]
+    for gh_name, env_name in _WIZARD_SECRET_MAP.items():
+        value = values.get(env_name, "").strip()
+        if value:
+            escaped = value.replace("`", "``").replace('"', '`"')
+            script_lines.append(f'gh secret set {gh_name} --body "{escaped}"')
+    for gh_name, env_name in _WIZARD_VAR_MAP.items():
+        value = values.get(env_name, "").strip()
+        if value:
+            escaped = value.replace("`", "``").replace('"', '`"')
+            script_lines.append(f'gh variable set {gh_name} --body "{escaped}"')
+
+    script_path.write_text("\n".join(script_lines).rstrip() + "\n", encoding="utf-8")
+    console.print(f"[green]✓[/green] Wrote {script_path}")
+    console.print("Run the script to push env-derived values to GitHub repo vars/secrets.")
 
 
 def main() -> None:

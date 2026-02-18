@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import secrets
 from pathlib import Path
 from typing import Any
@@ -19,11 +20,13 @@ class AutomationTool(Tool):
         heartbeat: HeartbeatConfig,
         llm: LLMConfig,
         on_models_updated: Any = None,
+        on_runtime_event: Any = None,
     ) -> None:
         self.db = db
         self.heartbeat = heartbeat
         self.llm = llm
         self.on_models_updated = on_models_updated
+        self.on_runtime_event = on_runtime_event
 
     @property
     def name(self) -> str:
@@ -89,13 +92,11 @@ class AutomationTool(Tool):
             return f"Heartbeat interval set to {self.heartbeat.interval_minutes} minute(s)."
         if action == "heartbeat_add_item":
             text = str(kwargs.get("text") or "").strip()
-            output_target = str(kwargs.get("output_target") or "").strip()
+            output_target = _normalize_output_target(str(kwargs.get("output_target") or "").strip())
             if not text:
                 return "Please provide text for the heartbeat item."
             if not output_target:
-                return (
-                    "Please specify output_target (example: telegram:default or email:ops)."
-                )
+                return "Please specify output_target (example: telegram or email)."
             items = self._heartbeat_items()
             items.append(f"- {text} | output={output_target}")
             self._write_heartbeat_items(items)
@@ -103,7 +104,7 @@ class AutomationTool(Tool):
         if action == "heartbeat_edit_item":
             index = int(kwargs.get("index") or 0)
             text = str(kwargs.get("text") or "").strip()
-            output_target = str(kwargs.get("output_target") or "").strip()
+            output_target = _normalize_output_target(str(kwargs.get("output_target") or "").strip())
             items = self._heartbeat_items()
             if index < 1 or index > len(items):
                 return "Heartbeat item not found."
@@ -114,11 +115,9 @@ class AutomationTool(Tool):
             current = items[index - 1]
             current_text, current_target = _parse_heartbeat_item(current)
             next_text = text or current_text
-            next_target = output_target or current_target
+            next_target = output_target or _normalize_output_target(current_target)
             if not next_target:
-                return (
-                    "Please specify output_target (example: telegram:default or email:ops)."
-                )
+                return "Please specify output_target (example: telegram or email)."
             items[index - 1] = f"- {next_text} | output={next_target}"
             self._write_heartbeat_items(items)
             return f"Updated heartbeat item #{index}."
@@ -131,11 +130,9 @@ class AutomationTool(Tool):
             self._write_heartbeat_items(items)
             return f"Removed heartbeat item #{index}."
         if action == "cron_add":
-            output_target = str(kwargs.get("output_target") or "").strip()
+            output_target = _normalize_output_target(str(kwargs.get("output_target") or "").strip())
             if not output_target:
-                return (
-                    "Please specify output_target (example: telegram:default or email:ops)."
-                )
+                return "Please specify output_target (example: telegram or email)."
             await self.db.heartbeat_cron_add(
                 label=str(kwargs.get("label") or "cron"),
                 schedule=str(kwargs.get("schedule") or "*/30 * * * *"),
@@ -171,13 +168,13 @@ class AutomationTool(Tool):
         if action == "model_set":
             regular = str(kwargs.get("regular_model") or kwargs.get("model") or "").strip()
             smart = str(kwargs.get("smart_model") or kwargs.get("model") or "").strip()
-            return self._set_models(regular_model=regular, smart_model=smart)
+            return await self._set_models(regular_model=regular, smart_model=smart)
         if action == "model_set_regular":
             regular = str(kwargs.get("regular_model") or kwargs.get("model") or "").strip()
-            return self._set_models(regular_model=regular, smart_model="")
+            return await self._set_models(regular_model=regular, smart_model="")
         if action == "model_set_smart":
             smart = str(kwargs.get("smart_model") or kwargs.get("model") or "").strip()
-            return self._set_models(regular_model="", smart_model=smart)
+            return await self._set_models(regular_model="", smart_model=smart)
         return "Unsupported action."
 
     def _heartbeat_show(self) -> str:
@@ -190,7 +187,7 @@ class AutomationTool(Tool):
             f"checklist:\n{listed or '(empty)'}"
         )
 
-    def _set_models(self, *, regular_model: str, smart_model: str) -> str:
+    async def _set_models(self, *, regular_model: str, smart_model: str) -> str:
         if regular_model:
             self.llm.model = regular_model
         if smart_model:
@@ -200,6 +197,16 @@ class AutomationTool(Tool):
                 regular_model=self.llm.model,
                 smart_model=self.llm.smart_model,
             )
+        if callable(self.on_runtime_event):
+            maybe = self.on_runtime_event(
+                name="model_changed",
+                payload={
+                    "regular_model": self.llm.model,
+                    "smart_model": self.llm.smart_model,
+                },
+            )
+            if inspect.isawaitable(maybe):
+                await maybe
         return (
             "Runtime models updated.\n"
             f"regular_model={self.llm.model}\n"
@@ -234,3 +241,14 @@ def _parse_heartbeat_item(line: str) -> tuple[str, str]:
                 output_target = part.split("=", 1)[1].strip()
                 break
     return text.strip(), output_target
+
+
+def _normalize_output_target(value: str) -> str:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return ""
+    if ":" in normalized:
+        normalized = normalized.split(":", 1)[0].strip()
+    if normalized in {"telegram", "email", "log", "webhook"}:
+        return normalized
+    return normalized

@@ -59,3 +59,8 @@ class ChannelProvider(ABC):
     @abstractmethod
     def status(self) -> ChannelStatus:
         ...
+
+    @abstractmethod
+    async def send_system_message(self, text: str) -> bool:
+        """Send an outbound runtime/system message using provider default routing."""
+        ...

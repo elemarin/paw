@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from paw.agent.conversation import ConversationManager
 from paw.agent.loop import AgentLoop
 from paw.agent.memory import MemoryTool
-from paw.agent.soul import get_system_prompt, load_soul
+from paw.agent.soul import load_soul
 from paw.agent.tools import ToolRegistry
 from paw.automation.scheduler import AutomationScheduler
 from paw.channels.base import ChannelInboundEvent
@@ -22,6 +22,7 @@ from paw.coder.engine import CoderTool
 from paw.config import get_config
 from paw.db.engine import Database
 from paw.extensions.loader import load_plugins
+from paw.gateway import InboundEvent, OutputRouter, PawEventGateway
 from paw.llm.gateway import LLMGateway
 from paw.logging import setup_logging
 from paw.tools.automation import AutomationTool
@@ -74,7 +75,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await memory_tool.load_from_db()
 
     # Initialize conversation manager — rebuild soul with DB memories
-    soul = get_system_prompt(config.soul_path, memory_tool=memory_tool)
+    soul = load_soul(config.soul_path)
     conversations = ConversationManager(db=db, soul=soul)
     await conversations.load_from_db()
 
@@ -87,48 +88,49 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
 
     channel_router = ChannelRouter(db)
+    output_router = OutputRouter(
+        channel_manager=None,
+        webhook_timeout_s=config.webhooks.outbound_timeout_s,
+    )
+    event_gateway = PawEventGateway(
+        config=config,
+        conversations=conversations,
+        agent=agent,
+        llm_gateway=gateway,
+        memory_tool=memory_tool,
+        channel_router=channel_router,
+        output_router=output_router,
+    )
 
     async def handle_channel_inbound(event: ChannelInboundEvent) -> str:
-        conv_id = await channel_router.resolve_conversation_id(event.channel, event.session_key)
-        conversation = conversations.get_or_create(conv_id)
-
-        fresh_soul = get_system_prompt(config.soul_path, memory_tool=memory_tool)
-        if conversation.messages and conversation.messages[0].role == "system":
-            conversation.messages[0].content = fresh_soul
-        elif not conversation.messages:
-            conversation.add_message("system", fresh_soul)
-
-        conversation.add_message("user", event.text)
-
-        if event.agent_mode:
-            result = await agent.run(
-                conversation=conversation,
+        processed = await event_gateway.handle_event(
+            InboundEvent(
+                kind="user_message",
+                channel=event.channel,
+                session_key=event.session_key,
+                sender_id=event.sender_id,
+                peer_id=event.peer_id,
+                text=event.text,
                 model=event.model,
-                temperature=None,
-                max_tokens=None,
+                agent_mode=event.agent_mode,
+                metadata={
+                    "message_id": event.message_id,
+                    "update_id": event.update_id,
+                    "thread_id": event.thread_id,
+                },
             )
-            await conversations.save_conversation(conversation)
-            return result.response
-
-        messages = [{"role": m.role, "content": m.content} for m in conversation.messages]
-        response = await gateway.completion(
-            messages=messages,
-            model=event.model,
-            temperature=None,
-            max_tokens=None,
         )
-        content = response.choices[0].message.content or ""
-        conversation.add_message("assistant", content)
-        await conversations.save_conversation(conversation)
-        return content
+        return processed.response_text
 
     channel_manager = ChannelRuntimeManager(
         config=config,
         db=db,
         inbound_handler=handle_channel_inbound,
     )
+    output_router.channel_manager = channel_manager
     await channel_manager.start()
     automation_tool.on_models_updated = channel_manager.set_models
+    automation_tool.on_runtime_event = event_gateway.emit_hook
 
     async def run_automation_prompt(
         prompt: str,
@@ -136,16 +138,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         output_target: str | None = None,
     ) -> None:
         target = (output_target or "").strip() or "log"
-        event = ChannelInboundEvent(
-            channel="automation",
-            session_key=f"automation:{source}:{target}",
-            sender_id="system",
-            peer_id="system",
-            text=prompt,
-            model=None,
-            agent_mode=True,
+        await event_gateway.handle_event(
+            InboundEvent(
+                kind="heartbeat" if source == "heartbeat" else "cron",
+                channel="automation",
+                session_key=f"automation:{source}:{target}",
+                sender_id="system",
+                peer_id="system",
+                text=prompt,
+                model=None,
+                agent_mode=True,
+                output_target=target,
+                metadata={"source": source},
+            )
         )
-        await handle_channel_inbound(event)
 
     scheduler = AutomationScheduler(config=config.heartbeat, db=db, runner=run_automation_prompt)
     await scheduler.start()
@@ -162,6 +168,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.channel_router = channel_router
     app.state.channel_manager = channel_manager
     app.state.scheduler = scheduler
+    app.state.event_gateway = event_gateway
 
     logger.info(
         "paw.ready",
@@ -194,12 +201,14 @@ def create_app() -> FastAPI:
     from paw.api.routes.conversations import router as conversations_router
     from paw.api.routes.health import router as health_router
     from paw.api.routes.memory import router as memory_router
+    from paw.api.routes.webhooks import router as webhooks_router
 
     app.include_router(health_router, tags=["health"])
     app.include_router(chat_router, tags=["chat"])
     app.include_router(channels_router, tags=["channels"])
     app.include_router(conversations_router, tags=["conversations"])
     app.include_router(memory_router, tags=["memory"])
+    app.include_router(webhooks_router, tags=["webhooks"])
 
     return app
 

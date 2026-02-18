@@ -61,14 +61,16 @@ class AutomationScheduler:
         if now.minute % interval != 0 or self._last_heartbeat_minute == minute_bucket:
             return
 
-        checklist = _load_checklist(self.config.checklist_path)
-        if checklist:
-            await self.runner(
-                f"[HEARTBEAT]\n{checklist}",
-                "heartbeat",
-                self.config.default_output_target.strip() or None,
-            )
-            logger.info("automation.heartbeat.ran", minute=minute_bucket)
+        items = _load_heartbeat_items(self.config.checklist_path)
+        default_target = self.config.default_output_target.strip() or None
+        if items:
+            for text, output_target in items:
+                await self.runner(
+                    f"[HEARTBEAT]\n{text}",
+                    "heartbeat",
+                    output_target or default_target,
+                )
+            logger.info("automation.heartbeat.ran", minute=minute_bucket, item_count=len(items))
         self._last_heartbeat_minute = minute_bucket
 
     async def _run_cron_if_due(self, now: datetime) -> None:
@@ -90,11 +92,33 @@ class AutomationScheduler:
             logger.info("automation.cron.ran", job_id=job_id, label=job["label"])
 
 
-def _load_checklist(path: str) -> str:
+def _load_heartbeat_items(path: str) -> list[tuple[str, str | None]]:
     primary = Path(path)
-    if primary.exists():
-        return primary.read_text(encoding="utf-8").strip()
-    return ""
+    source = primary
+
+    if not source.exists():
+        return []
+
+    items: list[tuple[str, str | None]] = []
+    for raw_line in source.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line.startswith("-"):
+            continue
+        body = line.removeprefix("-").strip()
+        text_part, sep, tail = body.partition("|")
+        output_target: str | None = None
+        if sep:
+            for token in tail.split("|"):
+                token = token.strip()
+                if token.lower().startswith("output="):
+                    value = token.split("=", 1)[1].strip()
+                    if value:
+                        output_target = value
+                    break
+        text = text_part.strip()
+        if text:
+            items.append((text, output_target))
+    return items
 
 
 def _cron_matches(schedule: str, now: datetime) -> bool:

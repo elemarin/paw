@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 def _load_yaml_config() -> dict[str, Any]:
@@ -61,16 +61,16 @@ class AgentConfig(BaseSettings):
     max_tool_calls: int = Field(default=20, gt=0, description="Max tool calls per request")
     token_budget: int = Field(default=100_000, gt=0, description="Max tokens per request")
     daily_token_budget: int = Field(default=1_000_000, gt=0, description="Daily token limit")
-    tool_models: dict[str, str] = Field(
+    tool_models: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=dict,
         description="Direct tool->model overrides",
     )
-    tool_model_profiles: dict[str, str] = Field(
+    tool_model_profiles: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=dict,
         description="Named tool model profiles, e.g. regular/smart",
     )
     tool_profile_default: str = Field(default="", description="Default tool model profile")
-    tool_profile_by_tool: dict[str, str] = Field(
+    tool_profile_by_tool: Annotated[dict[str, str], NoDecode] = Field(
         default_factory=dict,
         description="Tool->profile mapping",
     )
@@ -160,9 +160,10 @@ class TelegramChannelConfig(BaseSettings):
     model: str | None = None
     smart_model: str | None = None
     agent_mode: bool = True
+    default_chat_id: str | None = None
 
     dm_policy: Literal["allowlist", "open", "disabled"] = "allowlist"
-    allow_from: list[str] = Field(default_factory=list)
+    allow_from: Annotated[list[str], NoDecode] = Field(default_factory=list)
     pairing_enabled: bool = False
     pairing_code_ttl_minutes: int = Field(default=10, ge=1, le=120)
     groups_enabled: bool = False
@@ -209,13 +210,56 @@ class HeartbeatConfig(BaseSettings):
 
     enabled: bool = True
     interval_minutes: int = Field(default=5, ge=1, le=1440)
-    checklist_path: str = Field(default="/home/paw/heartbit.md")
+    checklist_path: str = Field(default="/home/paw/heartbeat.md")
     default_output_target: str = Field(
         default="",
-        description="Optional default output target, e.g. telegram:default or email:ops",
+        description="Optional default output target, e.g. telegram or email",
     )
 
     model_config = SettingsConfigDict(env_prefix="PAW_HEARTBEAT_")
+
+
+class HooksConfig(BaseSettings):
+    """Internal runtime hook fanout configuration."""
+
+    model_changed_targets: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    model_changed_webhooks: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    @field_validator("model_changed_targets", "model_changed_webhooks", mode="before")
+    @classmethod
+    def _parse_target_list(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            if text.startswith("["):
+                import json
+
+                try:
+                    parsed = json.loads(text)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, list):
+                    return [str(item).strip() for item in parsed if str(item).strip()]
+            return [item.strip() for item in text.split(",") if item.strip()]
+        if isinstance(value, (list, tuple, set)):
+            return [str(item).strip() for item in value if str(item).strip()]
+        return [str(value).strip()] if str(value).strip() else []
+
+    model_config = SettingsConfigDict(env_prefix="PAW_HOOKS_")
+
+
+class WebhooksConfig(BaseSettings):
+    """Webhook ingress/egress runtime configuration."""
+
+    enabled: bool = True
+    inbound_enabled: bool = True
+    inbound_secret: str = ""
+    outbound_timeout_s: int = Field(default=10, ge=1, le=120)
+
+    model_config = SettingsConfigDict(env_prefix="PAW_WEBHOOK_")
 
 
 class PawConfig(BaseSettings):
@@ -241,6 +285,8 @@ class PawConfig(BaseSettings):
     shell: ShellConfig = Field(default_factory=ShellConfig)
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     heartbeat: HeartbeatConfig = Field(default_factory=HeartbeatConfig)
+    hooks: HooksConfig = Field(default_factory=lambda: HooksConfig())
+    webhooks: WebhooksConfig = Field(default_factory=lambda: WebhooksConfig())
 
     # Logging
     log_level: str = Field(default="INFO")
@@ -262,6 +308,8 @@ class PawConfig(BaseSettings):
         shell_data = yaml_cfg.pop("shell", {})
         channels_data = yaml_cfg.pop("channels", {})
         heartbeat_data = yaml_cfg.pop("heartbeat", {})
+        hooks_data = yaml_cfg.pop("hooks", {})
+        webhooks_data = yaml_cfg.pop("webhooks", {})
 
         # Only pass YAML sub-configs if they have data;
         # otherwise let pydantic-settings pick up env vars
@@ -276,6 +324,10 @@ class PawConfig(BaseSettings):
             kwargs["channels"] = ChannelsConfig(**channels_data)
         if heartbeat_data:
             kwargs["heartbeat"] = HeartbeatConfig(**heartbeat_data)
+        if hooks_data:
+            kwargs["hooks"] = HooksConfig(**hooks_data)
+        if webhooks_data:
+            kwargs["webhooks"] = WebhooksConfig(**webhooks_data)
 
         return cls(**kwargs)
 
