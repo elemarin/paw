@@ -397,6 +397,22 @@ class Database:
         )
         return str(row["session_key"]) if row and row.get("session_key") else None
 
+    async def channel_session_delete(self, channel: str, session_key: str) -> bool:
+        """Delete a channel session mapping (so the next message starts a fresh conversation)."""
+        result = await self.execute(
+            "DELETE FROM channel_sessions WHERE channel = ? AND session_key = ?",
+            (channel, session_key),
+        )
+        return result.rowcount > 0
+
+    async def conversation_delete(self, conversation_id: str) -> bool:
+        """Delete a conversation and all its messages/tool_calls (ON DELETE CASCADE)."""
+        result = await self.execute(
+            "DELETE FROM conversations WHERE id = ?",
+            (conversation_id,),
+        )
+        return result.rowcount > 0
+
     async def channel_runtime_upsert(
         self,
         *,

@@ -14,6 +14,7 @@ from paw.db.engine import Database
 logger = structlog.get_logger()
 
 InboundHandler = Callable[[ChannelInboundEvent], Awaitable[str]]
+ClearConversationHandler = Callable[[str, str], Awaitable[str | None]]
 
 
 def _parse_output_target(target: str) -> str | None:
@@ -40,10 +41,17 @@ def _parse_output_target(target: str) -> str | None:
 class ChannelRuntimeManager:
     """Owns lifecycle and status of all enabled channel providers."""
 
-    def __init__(self, config: PawConfig, db: Database, inbound_handler: InboundHandler) -> None:
+    def __init__(
+        self,
+        config: PawConfig,
+        db: Database,
+        inbound_handler: InboundHandler,
+        clear_conversation_handler: ClearConversationHandler | None = None,
+    ) -> None:
         self.config = config
         self.db = db
         self.inbound_handler = inbound_handler
+        self.clear_conversation_handler = clear_conversation_handler
         self.providers: list[ChannelProvider] = []
 
         self._initialize_providers()
@@ -53,6 +61,7 @@ class ChannelRuntimeManager:
             config=self.config.channels.telegram,
             db=self.db,
             inbound_handler=self.inbound_handler,
+            clear_conversation_handler=self.clear_conversation_handler,
             default_model=self.config.llm.model,
             default_smart_model=self.config.llm.smart_model,
             heartbeat_interval_minutes=self.config.heartbeat.interval_minutes,

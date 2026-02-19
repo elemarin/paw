@@ -128,6 +128,22 @@ class PawEventGateway:
             tool_calls_made=0,
         )
 
+    async def clear_conversation(self, channel: str, session_key: str) -> str | None:
+        """Detach the current conversation from a channel session so the next message starts fresh.
+
+        The old conversation and its messages are kept in the database (unlinked, not deleted).
+        Only the session→conversation_id mapping is removed, and the conversation is evicted
+        from the in-memory cache so it won't be sent to the LLM anymore.
+        Returns the previous conversation_id, or None if no session existed.
+        """
+        db = self.channel_router.db
+        conversation_id = await db.channel_session_get(channel, session_key)
+        if conversation_id:
+            self.conversations.delete(conversation_id)
+        await db.channel_session_delete(channel, session_key)
+        logger.info("gateway.conversation_cleared", channel=channel, session_key=session_key)
+        return conversation_id
+
     async def emit_hook(self, *, name: str, payload: dict) -> None:
         """Dispatch configured internal hook notifications."""
         hook_cfg = self.config.hooks

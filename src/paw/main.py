@@ -122,10 +122,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         )
         return processed.response_text
 
+    async def clear_channel_conversation(channel: str, session_key: str) -> str | None:
+        return await event_gateway.clear_conversation(channel, session_key)
+
     channel_manager = ChannelRuntimeManager(
         config=config,
         db=db,
         inbound_handler=handle_channel_inbound,
+        clear_conversation_handler=clear_channel_conversation,
     )
     output_router.channel_manager = channel_manager
     await channel_manager.start()

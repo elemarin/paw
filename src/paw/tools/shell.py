@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from pathlib import Path
 from typing import Any
 
@@ -73,15 +72,14 @@ class ShellTool(Tool):
                 logger.warning("shell.approval_needed", command=command, pattern=pattern)
                 return f"Error: Command requires approval — pattern '{pattern}' is not allowed."
 
-        args = shlex.split(command)
-        if not args:
+        if not command.strip():
             return "Error: Empty command."
 
         logger.info("shell.execute", command=command, cwd=working_dir)
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *args,
+            process = await asyncio.create_subprocess_shell(
+                command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,

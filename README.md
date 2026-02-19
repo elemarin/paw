@@ -1,215 +1,159 @@
-# 🐾 PAW — Your Personal Autonomous AI Agent (Cloud-Ready)
+# 🐾 PAW — Personal Agent Workspace
 
-PAW is a self-hosted AI agent you can run in the cloud, control from CLI/API/Telegram, and extend with plugins.
-
-Simple to start. Lightweight by default. Flexible when you need more.
-
----
-
-## Why PAW
-
-Most AI agent products are either too rigid or too heavy to run your way.
-
-PAW gives you a better path:
-
-- **Simple**: get from clone to working agent in minutes
-- **Lightweight**: focused core, practical tools, no bloated platform
-- **Flexible**: use the model/provider you want via LiteLLM (OpenAI, Anthropic, Google, Ollama, Azure, and more)
-- **Personal**: your memory, your plugins, your cloud environment
-
-> PAW is your small autonomous cloud worker — always on, always yours.
-
----
-
-## What you get
-
-- **Agent runtime** with Think → Act → Observe loop
-- **Tooling built in**: shell, files, memory, automation, coder
-- **Dual memory**: persistent key-value + markdown memory logs
-- **Secure defaults**: filesystem sandboxing, command restrictions, approval patterns, token budgets
-- **Multi-channel control**: CLI, HTTP API, Telegram channel runtime, inbound webhooks
-- **Plugin architecture**: drop new capabilities into `plugins/`
-
----
-
-## 60-Second Quick Start
-
-### 1) Configure
-
-```bash
-git clone <your-repo-url> paw
-cd paw
-
-# create .env and set at least your model API key
-# example values are documented below
+```
+                            __
+     ,                    ," e`--o
+    ((                   (  | __,'
+     \~----------------' \_;/
+     (                      /
+     /) ._______________.  )
+    (( (               (( (
+     ``-'               ``-'
 ```
 
-### 2) Run
+**Your self-hosted AI agent. Always on. Always yours. Built different.** 🐾
+
+PAW is an autonomous AI agent you deploy once and talk to forever — via Telegram, CLI, API, or webhooks. It has memory, can run code, build its own plugins, and actually gets stuff done. Think less "AI chatbot" and more "overcaffeinated tech-savvy dog that never sleeps."
+
+Open source. Self-hosted. No subscriptions. No data leaving your infra unless *you* say so.
+
+---
+
+## why PAW hits different
+
+Most AI agent platforms are either locked down SaaS or a 40-file framework nightmare to self-host. PAW is neither.
+
+- **Clone to running in under 5 minutes** — seriously, it's just Docker
+- **Bring your own model** — OpenAI, Anthropic, Gemini, Ollama, Azure, whatever. LiteLLM handles it.
+- **Your memory, your plugins, your rules** — nothing phoning home
+- **Grows with you** — PAW can literally build its own new capabilities as plugins
+
+> PAW is the personal AI agent for people who want power without the platform tax.
+
+---
+
+## what's in the box
+
+| What | Why it slaps |
+|---|---|
+| **Shell** | Runs commands in PAW's Linux env with guardrails so it doesn't nuke your stuff |
+| **Files** | Reads/writes inside approved dirs only — no path traversal nonsense |
+| **Memory** | Remembers things across conversations. Actually. For real. |
+| **Automation** | Heartbeat tasks, cron jobs, proactive check-ins — set it and forget it |
+| **Coder** | Scaffolds new plugins. PAW can teach itself new tricks. |
+| **Channels** | CLI, HTTP API, Telegram, webhooks — talk to it however you want |
+
+---
+
+## quick start (for real, it's quick)
 
 ```bash
+git clone <your-repo-url> paw && cd paw
+# drop your API key in .env
 docker compose up -d
 ```
 
-### 3) Talk to PAW
+That's it. PAW is running.
+
+**Talk to it:**
 
 ```bash
 pip install -e .
-
-paw chat "Hello PAW"
-paw status
+paw chat "hey what can you do"
 ```
 
-### 4) Use API
+**Or hit the API:**
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "Summarize my current workspace"}],
-    "agent_mode": true
-  }'
+  -d '{"messages": [{"role": "user", "content": "summarize my workspace"}], "agent_mode": true}'
 ```
 
 ---
 
-## Lightweight by design
+## memory that actually works
 
-PAW keeps the core focused and small:
+PAW uses two layers so it never forgets the important stuff — without letting the prompt balloon into a novel:
 
-- FastAPI service
-- Agent loop
-- Tool registry
-- Plugin loader
-- PostgreSQL-backed state
-
-No mandatory UI, no monolith, no vendor lock-in.
+1. **Key-value memory** — fast retrieval of facts, preferences, context
+2. **Markdown memory logs** — `MEMORY.md` + rolling daily logs
 
 ---
 
-## Flexible in production
-
-PAW is built to run where you run:
-
-- Local Docker for development
-- Cloud VM/container host
-- Azure Container Apps (Bicep + GitHub deployment workflow included)
-
-Deployment assets:
-
-- `infra/azure/main.bicep`
-- `.github/workflows/deploy-azure.yml`
-- `docs/azure-deployment.md`
-
----
-
-## Core capabilities
-
-| Capability | What it does |
-|---|---|
-| **Shell** | Executes commands in PAW's Linux runtime with blocked-command and approval safeguards |
-| **Files** | Reads/writes/searches files inside approved directories only |
-| **Memory** | Stores and recalls persistent facts across conversations |
-| **Automation** | Runs heartbeat checks and scheduled cron-style tasks |
-| **Coder** | Scaffolds plugin ideas and implementation proposals |
-
----
-
-## Automation that actually helps
-
-PAW includes proactive automation out of the box:
-
-- **Heartbeat cadence** (default every 5 minutes)
-- **Checklist source**: `heartbeat.md`
-- **Scheduled jobs** via automation skill
-- **Explicit routing** per job with `output_target` (for example `telegram` or `email`)
-
-Examples:
+## automation that runs while you sleep
 
 ```bash
-paw chat "Check my repo health every hour and send updates to telegram"
-paw chat "Summarize open TODOs every 30 minutes and send to email"
+paw chat "check repo health every hour, bark at me on telegram if something's off"
+paw chat "summarize open TODOs every morning at 9am"
 ```
 
----
-
-## Built for safe autonomy
-
-PAW is designed to operate with guardrails:
-
-- File access restricted to approved writable zones (`workspace/`, `plugins/`, `data/`, `/tmp`)
-- Path traversal blocked
-- Dangerous shell patterns rejected unless explicitly approved
-- Optional API authentication via `X-API-Key`
-- Request/day token budgets
-- Output truncation for shell and file reads
+- Heartbeat cadence (default: every 5 min)
+- Cron-style scheduled jobs
+- Output routing per job (`telegram`, `email`, wherever)
 
 ---
 
-## Memory that persists
+## guardrails, not a leash
 
-PAW uses two complementary memory layers:
+PAW operates autonomously but isn't reckless:
 
-1. **Key-value memory (MemSearch-backed)**
-2. **Markdown memory files** (`MEMORY.md` + recent daily logs)
-
-This keeps context durable without letting prompts grow unbounded.
-
----
-
-## Channels: CLI, API, Telegram, Webhooks
-
-PAW supports multiple ways to interact:
-
-- CLI for fast local/operator workflows
-- OpenAI-compatible chat API endpoint
-- Telegram polling runtime with per-chat mode controls
-- Inbound webhook endpoint for external event ingestion
-
-Useful endpoints:
-
-- `GET /health`
-- `GET /v1/channels/status`
-- `POST /v1/channels/{channel}/sessions/{session_key}/mode`
-- `POST /v1/webhooks/inbound`
+- File access locked to approved zones (`workspace/`, `plugins/`, `data/`, `/tmp`)
+- Dangerous shell patterns flagged and blocked unless you explicitly approve
+- Optional API key auth (`X-API-Key`)
+- Token budgets per request and per day
+- Approval step before any plugin ships
 
 ---
 
-## Plugin ecosystem
+## plugin system — PAW learns new tricks
 
-Drop plugins in `plugins/<name>/` with:
+Drop a folder in `plugins/<name>/` with `plugin.yaml` + `__init__.py` and PAW picks it up automatically.
 
-- `plugin.yaml` metadata
-- `__init__.py` plugin class
+Or just ask PAW to build one:
 
-Included example: `plugins/brave_search` (adds a `web_search` tool when `PAW_BRAVE_API_KEY` is set).
+```bash
+paw chat "build me a plugin that checks HackerNews top stories"
+```
+
+It'll scaffold, test, and propose it for approval. You ship it, it's live.
+
+Included starter: `plugins/brave_search` — web search when `PAW_BRAVE_API_KEY` is set.
 
 ---
 
-## Minimal config
+## deploy anywhere
 
-Set these in `.env`:
+- **Local**: Docker Compose, works immediately
+- **Cloud**: Azure Container Apps with included Bicep + GitHub Actions workflow
+  - `infra/azure/main.bicep`
+  - `docs/azure-deployment.md`
+
+---
+
+## minimal `.env` to get going
 
 ```bash
 PAW_LLM__API_KEY=sk-...
 PAW_LLM__MODEL=openai/gpt-4o-mini
-PAW_LLM__SMART_MODEL=openai/gpt-5.2
-PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
+PAW_DATABASE_URL=postgresql://paw:pawssword@postgres:5432/paw?sslmode=disable
 PAW_API_KEY=change-me-strong-key
 ```
 
-Optional:
+Optional extras:
 
 ```bash
-PAW_BRAVE_API_KEY=...
-PAW_TELEGRAM_ENABLED=true
-PAW_TELEGRAM_BOT_TOKEN=123456789:your-token
+PAW_BRAVE_API_KEY=...          # web search
+PAW_TELEGRAM_ENABLED=true      # telegram channel
+PAW_TELEGRAM_BOT_TOKEN=...     # your bot token
+PAW_LLM__SMART_MODEL=...       # bigger model for heavy tasks
 ```
 
-See `paw.yaml.example` for full config options.
+Full options: see `paw.yaml.example`.
 
 ---
 
-## Development
+## dev setup
 
 ```bash
 pip install -e ".[dev]"
@@ -220,29 +164,10 @@ ruff check src/
 
 ---
 
-## Philosophy
+## the vibe
 
-PAW is intentionally **brain-first**:
-
-- small core
-- strong tooling
-- secure boundaries
-- extensibility through plugins
-
-You ship one reliable autonomous agent, then let it grow with your needs.
+PAW is **brain-first**: tiny core, strong tooling, hard boundaries, and infinite extensibility via plugins. No bloated platform. No vendor lock-in. No subscription.
 
 ---
 
-Built with ❤️ and a healthy amount of tokens. Mascot: Chips the wiener dog 🌭# 🐾 PAW — Personal Agent Workspace
-
-```
-                            __
-     ,                    ," e`--o
-    ((                   (  | __,'
-     \\~----------------' \_;/
-     (                      /
-     /) ._______________.  )
-    (( (               (( (
-     ``-'               ``-'
-
-```
+* built with ❤️ and an irresponsible number of tokens*

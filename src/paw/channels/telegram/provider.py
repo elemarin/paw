@@ -27,6 +27,7 @@ class TelegramChannelProvider(ChannelProvider):
         config: TelegramChannelConfig,
         db: Database,
         inbound_handler,
+        clear_conversation_handler=None,
         default_model: str,
         default_smart_model: str,
         heartbeat_interval_minutes: int = 5,
@@ -36,6 +37,7 @@ class TelegramChannelProvider(ChannelProvider):
         self.config = config
         self.db = db
         self.inbound_handler = inbound_handler
+        self.clear_conversation_handler = clear_conversation_handler
         self._regular_model = (self.config.model or default_model).strip()
         self._smart_model = (self.config.smart_model or default_smart_model).strip()
         self._heartbeat_interval_minutes = max(1, int(heartbeat_interval_minutes))
@@ -212,6 +214,7 @@ class TelegramChannelProvider(ChannelProvider):
                 "commands": [
                     {"command": "mode", "description": "Toggle mode: regular/smart"},
                     {"command": "status", "description": "Show current model mode"},
+                    {"command": "clear", "description": "Clear conversation history and start fresh"},
                     {"command": "pair", "description": "Pair this chat with a one-time code"},
                     {
                         "command": "heartbeat",
@@ -510,6 +513,12 @@ class TelegramChannelProvider(ChannelProvider):
                     f"Smart model: {self._smart_model}"
                 ),
             )
+
+        if command_name == "clear":
+            if self.clear_conversation_handler is not None:
+                await self.clear_conversation_handler("telegram", session_key)
+                return True, "Conversation cleared. Starting fresh!"
+            return True, "Clear is not available in this configuration."
 
         if command_name == "heartbeat":
             return True, self._handle_heartbeat_command(command_arg)
