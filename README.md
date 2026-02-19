@@ -1,4 +1,239 @@
-# 🐾 PAW — Personal Agent Workspace
+# 🐾 PAW — Your Personal Autonomous AI Agent (Cloud-Ready)
+
+PAW is a self-hosted AI agent you can run in the cloud, control from CLI/API/Telegram, and extend with plugins.
+
+Simple to start. Lightweight by default. Flexible when you need more.
+
+---
+
+## Why PAW
+
+Most AI agent products are either too rigid or too heavy to run your way.
+
+PAW gives you a better path:
+
+- **Simple**: get from clone to working agent in minutes
+- **Lightweight**: focused core, practical tools, no bloated platform
+- **Flexible**: use the model/provider you want via LiteLLM (OpenAI, Anthropic, Google, Ollama, Azure, and more)
+- **Personal**: your memory, your plugins, your cloud environment
+
+> PAW is your small autonomous cloud worker — always on, always yours.
+
+---
+
+## What you get
+
+- **Agent runtime** with Think → Act → Observe loop
+- **Tooling built in**: shell, files, memory, automation, coder
+- **Dual memory**: persistent key-value + markdown memory logs
+- **Secure defaults**: filesystem sandboxing, command restrictions, approval patterns, token budgets
+- **Multi-channel control**: CLI, HTTP API, Telegram channel runtime, inbound webhooks
+- **Plugin architecture**: drop new capabilities into `plugins/`
+
+---
+
+## 60-Second Quick Start
+
+### 1) Configure
+
+```bash
+git clone <your-repo-url> paw
+cd paw
+
+# create .env and set at least your model API key
+# example values are documented below
+```
+
+### 2) Run
+
+```bash
+docker compose up -d
+```
+
+### 3) Talk to PAW
+
+```bash
+pip install -e .
+
+paw chat "Hello PAW"
+paw status
+```
+
+### 4) Use API
+
+```bash
+curl http://localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [{"role": "user", "content": "Summarize my current workspace"}],
+    "agent_mode": true
+  }'
+```
+
+---
+
+## Lightweight by design
+
+PAW keeps the core focused and small:
+
+- FastAPI service
+- Agent loop
+- Tool registry
+- Plugin loader
+- PostgreSQL-backed state
+
+No mandatory UI, no monolith, no vendor lock-in.
+
+---
+
+## Flexible in production
+
+PAW is built to run where you run:
+
+- Local Docker for development
+- Cloud VM/container host
+- Azure Container Apps (Bicep + GitHub deployment workflow included)
+
+Deployment assets:
+
+- `infra/azure/main.bicep`
+- `.github/workflows/deploy-azure.yml`
+- `docs/azure-deployment.md`
+
+---
+
+## Core capabilities
+
+| Capability | What it does |
+|---|---|
+| **Shell** | Executes commands in PAW's Linux runtime with blocked-command and approval safeguards |
+| **Files** | Reads/writes/searches files inside approved directories only |
+| **Memory** | Stores and recalls persistent facts across conversations |
+| **Automation** | Runs heartbeat checks and scheduled cron-style tasks |
+| **Coder** | Scaffolds plugin ideas and implementation proposals |
+
+---
+
+## Automation that actually helps
+
+PAW includes proactive automation out of the box:
+
+- **Heartbeat cadence** (default every 5 minutes)
+- **Checklist source**: `heartbeat.md`
+- **Scheduled jobs** via automation skill
+- **Explicit routing** per job with `output_target` (for example `telegram` or `email`)
+
+Examples:
+
+```bash
+paw chat "Check my repo health every hour and send updates to telegram"
+paw chat "Summarize open TODOs every 30 minutes and send to email"
+```
+
+---
+
+## Built for safe autonomy
+
+PAW is designed to operate with guardrails:
+
+- File access restricted to approved writable zones (`workspace/`, `plugins/`, `data/`, `/tmp`)
+- Path traversal blocked
+- Dangerous shell patterns rejected unless explicitly approved
+- Optional API authentication via `X-API-Key`
+- Request/day token budgets
+- Output truncation for shell and file reads
+
+---
+
+## Memory that persists
+
+PAW uses two complementary memory layers:
+
+1. **Key-value memory (MemSearch-backed)**
+2. **Markdown memory files** (`MEMORY.md` + recent daily logs)
+
+This keeps context durable without letting prompts grow unbounded.
+
+---
+
+## Channels: CLI, API, Telegram, Webhooks
+
+PAW supports multiple ways to interact:
+
+- CLI for fast local/operator workflows
+- OpenAI-compatible chat API endpoint
+- Telegram polling runtime with per-chat mode controls
+- Inbound webhook endpoint for external event ingestion
+
+Useful endpoints:
+
+- `GET /health`
+- `GET /v1/channels/status`
+- `POST /v1/channels/{channel}/sessions/{session_key}/mode`
+- `POST /v1/webhooks/inbound`
+
+---
+
+## Plugin ecosystem
+
+Drop plugins in `plugins/<name>/` with:
+
+- `plugin.yaml` metadata
+- `__init__.py` plugin class
+
+Included example: `plugins/brave_search` (adds a `web_search` tool when `PAW_BRAVE_API_KEY` is set).
+
+---
+
+## Minimal config
+
+Set these in `.env`:
+
+```bash
+PAW_LLM__API_KEY=sk-...
+PAW_LLM__MODEL=openai/gpt-4o-mini
+PAW_LLM__SMART_MODEL=openai/gpt-5.2
+PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
+PAW_API_KEY=change-me-strong-key
+```
+
+Optional:
+
+```bash
+PAW_BRAVE_API_KEY=...
+PAW_TELEGRAM_ENABLED=true
+PAW_TELEGRAM_BOT_TOKEN=123456789:your-token
+```
+
+See `paw.yaml.example` for full config options.
+
+---
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+paw serve --reload
+pytest
+ruff check src/
+```
+
+---
+
+## Philosophy
+
+PAW is intentionally **brain-first**:
+
+- small core
+- strong tooling
+- secure boundaries
+- extensibility through plugins
+
+You ship one reliable autonomous agent, then let it grow with your needs.
+
+---
+
+Built with ❤️ and a healthy amount of tokens. Mascot: Chips the wiener dog 🌭# 🐾 PAW — Personal Agent Workspace
 
 ```
                             __
@@ -11,349 +246,3 @@
      ``-'               ``-'
 
 ```
-
-A self-hosted autonomous AI assistant that lives in its own Linux container. CLI-first. API-first. Telegram-ready. Model-agnostic. Sandboxed.
-
-> PAW is the core intelligence — everything else it builds for itself.
-
----
-
-## What is PAW (v1.0)?
-
-PAW is a personal AI agent that:
-
-- **Lives in a full Linux container** — it has shell access, a filesystem, and networking
-- **Uses any LLM** — OpenAI, Anthropic, Google, Ollama, or any provider via [LiteLLM](https://github.com/BerriAI/litellm)
-- **Has native skills** — shell execution, file management, persistent memory, automation scheduling, self-building
-- **Security-hardened** — sandboxed file access, command blocking, approval patterns, directory restrictions
-- **Dual memory system** — persistent key-value store powered by MemSearch + markdown-based memory files with rolling daily logs
-- **Has identity** — `soul.md` defines who PAW is, what it values, and how it works
-- **Builds itself** — the Coder skill lets PAW scaffold and propose extensions
-- **Is extensible** — open skill registry (native + extension-loaded skills)
-## Quick Start
-
-### 1. Clone & Configure
-
-```bash
-git clone <your-repo-url> paw
-cd paw
-cp .env.example .env
-# Edit .env — add your LLM API key
-
-# interactive bootstrap
-paw wizard
-```
-
-### 2. Run with Docker
-
-```bash
-docker compose up -d
-```
-
-### 3. Talk to PAW
-
-```bash
-# Install CLI
-pip install -e .
-
-# Chat
-paw chat "Hello! What can you do?"
-
-# Check status
-paw status
-
-# Use specific model
-paw chat "Explain quantum computing" --model anthropic/claude-sonnet-4-20250514
-
-# Use smart model globally
-paw chat "Think carefully about this architecture" --smart
-```
-
-### 4. Or use the API directly
-
-```bash
-curl http://localhost:8000/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{
-    "messages": [{"role": "user", "content": "Hello!"}],
-    "agent_mode": true,
-    "smart_mode": true
-  }'
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│  Ubuntu 22.04 Container                │
-│                                         │
-│  ┌─────────┐  ┌──────────────────────┐ │
-│  │ FastAPI  │  │    Agent Loop        │ │
-│  │  :8000   │──│  Think→Act→Observe   │ │
-│  └─────────┘  └──────┬───────────────┘ │
-│                       │                 │
-│  ┌────────────────────┴──────────────┐ │
-│  │         Tool Registry             │ │
-│  │  Shell │ Files │ Memory │ Coder   │ │
-│  └───────────────────────────────────┘ │
-│                                         │
-│  ┌──────────┐  ┌──────────────────┐    │
-│  │PostgreSQL│  │  Plugin System   │    │
-│  │   paw    │  │  /plugins/*      │    │
-│  └──────────┘  └──────────────────┘    │
-│                                         │
-│  ┌──────────────────────────────────┐  │
-│  │  LiteLLM Gateway → Any Provider │  │
-│  └──────────────────────────────────┘  │
-└─────────────────────────────────────────┘
-```
-
-## Built-in Tools
-
-| Tool | Description |
-|------|-------------|
-| **shell** | Execute commands in PAW's Linux environment — with blocked commands, approval patterns, timeout enforcement, and working-directory sandboxing |
-| **files** | Read, write, list, search, append, delete files — sandboxed to workspace/plugins/data/tmp directories only |
-| **memory** | Persistent key-value memory (MemSearch-backed) across conversations — remember, recall, forget, list |
-| **coder** | Create extensions, standalone scripts, and self-improvement proposals — with scaffolding and source introspection |
-| **automation** | Manage heartbeat checks, cron jobs, Telegram pairing-code generation, and runtime model/provider switching |
-
-## Heartbeat + Cron (OpenClaw-style proactive automation)
-
-PAW now includes a production heartbeat scheduler:
-
-- Default cadence: **every 5 minutes**
-- Checklist file: `heartbeat.md`
-- Cron jobs: configured and managed through the `automation` skill
-- Output routing: every cron item requires an explicit `output_target` (e.g. `telegram` or `email`)
-
-Natural language examples:
-
-```bash
-paw chat "Do a summary of my workspace every 30 mins and send it to telegram"
-paw chat "Check my repo health every hour and send updates to email"
-paw chat "Add a heartbeat item to check pending TODOs and send results to telegram"
-```
-
-Switch models/providers on the fly (OpenAI, Azure, Ollama, etc.) with the same skill:
-
-```bash
-paw chat "Switch my regular and smart models to ollama/llama3.1"
-```
-
-### How heartbeat outputs are communicated
-
-- By design, PAW does **not** hardcode Telegram as default for all automations.
-- Heartbeat/cron items should define an explicit `output_target` (for example `telegram` or `email`).
-- If a schedule request is missing an `output_target`, PAW asks you to specify one.
-- This keeps routing channel-agnostic so future channels can be added without reworking scheduler logic.
-
-## Security Hardening
-
-PAW runs inside a container but also enforces at the application layer:
-
-| Layer | What it does |
-|-------|-------------|
-| **File sandboxing** | All file reads and writes are restricted to `workspace/`, `plugins/`, `data/`, and `/tmp`. Path traversal attempts are blocked. |
-| **Shell command blocking** | Commands like `reboot`, `shutdown`, `mkfs` are permanently blocked. |
-| **Approval patterns** | Dangerous patterns (`rm -rf`, `dd`, `sudo`) are flagged and rejected unless explicitly approved. |
-| **Working-dir restriction** | Shell commands can only run with a `cwd` inside allowed writable directories. |
-| **API key auth** | Optional `X-API-Key` header authentication for all API endpoints. |
-| **Token budgets** | Per-request and daily token limits prevent runaway LLM costs. |
-| **Output truncation** | Shell output (10 KB) and file reads (50 KB) are capped to avoid prompt-stuffing. |
-
-## Memory System
-
-PAW has a **dual-layer memory** that persists across conversations:
-
-### Key-Value Store (MemSearch)
-The agent can `remember`, `recall`, `forget`, and `list` named memories. Stored via MemSearch, loaded into context on startup, and injected into the system prompt so the LLM always has access.
-
-### Markdown Memory Files
-PAW loads `MEMORY.md` (long-term notes) plus the last 3 days of daily logs (`YYYY-MM-DD.md`) from a `memory/` directory. This gives the agent a rolling context window of recent activity without unbounded growth.
-
-Both layers are merged into a `<MEMORY>` block in the system prompt so the LLM can answer from memory without extra tool calls.
-
-## Plugin System
-
-PAW discovers plugins automatically from the `plugins/` directory:
-
-```
-plugins/
-  my_plugin/
-    plugin.yaml     # Metadata
-    __init__.py     # PawPlugin subclass
-```
-
-Plugins extend the `PawPlugin` base class, receive access to the tool registry and database, and can register new tools on load. PAW can also **create its own plugins** using the Coder tool:
-
-```bash
-paw chat "Create a plugin that fetches weather data"
-```
-
-### Brave web search plugin
-
-This repo includes `plugins/brave_search`, which adds a `web_search` tool.
-
-Set an API key before starting PAW:
-
-```bash
-PAW_BRAVE_API_KEY=your-brave-api-key
-```
-
-Then ask PAW to search:
-
-```bash
-paw chat "Search the web for the latest FastAPI release notes"
-```
-
-## Configuration
-
-### Environment Variables (`.env`)
-
-```bash
-PAW_LLM__API_KEY=sk-...          # Your LLM API key
-PAW_LLM__MODEL=openai/gpt-4o-mini  # Model to use
-PAW_LLM__SMART_MODEL=openai/gpt-5.2  # Smart mode model
-PAW_DATABASE_URL=postgresql://paw:paw@postgres:5432/paw?sslmode=disable
-PAW_API_KEY=change-me-strong-key  # Required for API access
-PAW_BRAVE_API_KEY=...             # Optional: enables Brave web search plugin
-```
-
-### Config File (`paw.yaml`)
-
-See [paw.yaml.example](paw.yaml.example) for all options.
-
-## Telegram Channel (Core)
-
-PAW includes a first-class Telegram channel runtime (OpenClaw-style architecture, polling-first).
-
-### 1. Create bot token
-
-- Open Telegram and message `@BotFather`
-- Run `/newbot` and copy the token
-
-### 2. Configure `.env`
-
-```bash
-PAW_TELEGRAM_ENABLED=true
-PAW_TELEGRAM_BOT_TOKEN=123456789:your-token
-PAW_TELEGRAM_MODE=polling
-
-# Recommended for safety in production
-PAW_TELEGRAM_DM_POLICY=allowlist
-PAW_TELEGRAM_ALLOW_FROM=12345678
-
-# Optional: easier onboarding with one-time pair codes
-PAW_TELEGRAM_PAIRING_ENABLED=true
-PAW_TELEGRAM_PAIRING_CODE_TTL_MINUTES=10
-```
-
-### 3. Restart PAW
-
-```bash
-docker compose up -d --build
-```
-
-### 4. Verify health
-
-`GET /health` now includes a `channels` section with Telegram runtime state (`enabled`, `running`, `last_error`, timestamps).
-
-### 5. Telegram bot commands
-
-PAW registers Telegram bot commands on startup:
-
-- `/mode` — toggles between `regular` and `smart`
-- `/mode regular` — force regular mode
-- `/mode smart` — force smart mode
-- `/status` — show current mode and active model
-- `/pair <code>` — pair a private chat using one-time onboarding code
-
-Mode is persisted per Telegram chat session. Default mode is `regular`.
-
-### Channel status and mode API
-
-PAW now exposes unified channel controls:
-
-- `GET /v1/channels/status`
-- `GET /v1/channels/{channel}/sessions/{session_key}/mode`
-- `POST /v1/channels/{channel}/sessions/{session_key}/mode`
-- `POST /v1/channels/telegram/pair-code`
-
-### Webhooks (inbound)
-
-PAW now includes a first-class inbound webhook endpoint that enters the same gateway as channel/API traffic:
-
-- `POST /v1/webhooks/inbound`
-- Optional secret header: `X-Paw-Webhook-Secret` (set `PAW_WEBHOOK_INBOUND_SECRET`)
-- Supported event types: `user_message`, `heartbeat`, `cron`, `hook`, `webhook`
-
-## Azure Deployment (GitHub Auto-Deploy)
-
-PAW can be deployed to Azure Container Apps with persistent storage and automatic GitHub deployment.
-
-- Bicep template: `infra/azure/main.bicep`
-- GitHub workflow: `.github/workflows/deploy-azure.yml`
-- Full guide: [docs/azure-deployment.md](docs/azure-deployment.md)
-
-## Development
-
-```bash
-# Install in development mode
-pip install -e ".[dev]"
-
-# Run locally (without Docker)
-paw serve --reload
-
-# Run tests
-pytest
-
-# Lint
-ruff check src/
-```
-
-## Project Structure
-
-```
-src/paw/
-  main.py           # FastAPI app + lifespan
-  config.py          # Configuration (paw.yaml + .env)
-  logging.py         # Structured logging
-  agent/
-    loop.py          # ReAct agent loop (Think→Act→Observe)
-    tools.py         # Tool base class + registry
-    conversation.py  # Conversation state management
-    memory.py        # Persistent memory tool
-    soul.py          # soul.md loader
-  llm/
-    gateway.py       # LiteLLM async wrapper
-  api/
-    routes/          # FastAPI endpoints
-    middleware/      # Auth middleware
-  tools/
-    shell.py         # Shell command execution
-    files.py         # File operations
-  db/
-    engine.py        # PostgreSQL async database
-  extensions/
-    base.py          # Plugin base class
-    loader.py        # Auto-discovery plugin loader
-  coder/
-    engine.py        # Self-building tool
-  cli/
-    main.py          # Typer CLI
-```
-
-## Philosophy
-
-PAW is built around the idea that an AI agent should be a **digital worker** — not just a chatbot. It has its own environment, its own identity, and the ability to build new capabilities for itself.
-
-The core is small and focused. Everything else — web UIs, integrations, notification systems — PAW builds as plugins when you ask for them.
-
-Security isn't an afterthought. Every tool enforces sandbox boundaries, dangerous operations require approval, and the agent can never modify its own core code.
-
-**Ship the brain, not the body.**
-
----
-
-*Built with ❤️ and a lot of LLM tokens. Mascot: Chips the wiener dog 🌭*

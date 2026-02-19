@@ -55,6 +55,9 @@ class ChannelRuntimeManager:
             inbound_handler=self.inbound_handler,
             default_model=self.config.llm.model,
             default_smart_model=self.config.llm.smart_model,
+            heartbeat_interval_minutes=self.config.heartbeat.interval_minutes,
+            heartbeat_checklist_path=self.config.heartbeat.checklist_path,
+            heartbeat_default_output_target=self.config.heartbeat.default_output_target,
         )
         self.providers.append(telegram)
 

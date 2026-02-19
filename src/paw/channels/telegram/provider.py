@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -28,12 +29,18 @@ class TelegramChannelProvider(ChannelProvider):
         inbound_handler,
         default_model: str,
         default_smart_model: str,
+        heartbeat_interval_minutes: int = 5,
+        heartbeat_checklist_path: str = "/home/paw/heartbeat.md",
+        heartbeat_default_output_target: str = "",
     ) -> None:
         self.config = config
         self.db = db
         self.inbound_handler = inbound_handler
         self._regular_model = (self.config.model or default_model).strip()
         self._smart_model = (self.config.smart_model or default_smart_model).strip()
+        self._heartbeat_interval_minutes = max(1, int(heartbeat_interval_minutes))
+        self._heartbeat_checklist_path = heartbeat_checklist_path.strip() or "/home/paw/heartbeat.md"
+        self._heartbeat_default_output_target = heartbeat_default_output_target.strip()
 
         self._running = False
         self._task: asyncio.Task[None] | None = None
@@ -206,6 +213,10 @@ class TelegramChannelProvider(ChannelProvider):
                     {"command": "mode", "description": "Toggle mode: regular/smart"},
                     {"command": "status", "description": "Show current model mode"},
                     {"command": "pair", "description": "Pair this chat with a one-time code"},
+                    {
+                        "command": "heartbeat",
+                        "description": "Manage heartbeat checklist items",
+                    },
                 ]
             },
         )
@@ -454,7 +465,7 @@ class TelegramChannelProvider(ChannelProvider):
             if not self._bot_username or mention != self._bot_username:
                 return None
 
-        return normalized_command, remainder.strip().lower()
+        return normalized_command, remainder.strip()
 
     async def _handle_command(
         self,
@@ -500,17 +511,21 @@ class TelegramChannelProvider(ChannelProvider):
                 ),
             )
 
+        if command_name == "heartbeat":
+            return True, self._handle_heartbeat_command(command_arg)
+
         if command_name != "mode":
             return False, ""
 
+        normalized_arg = command_arg.strip().lower()
         stored_mode = await self.db.channel_session_mode_get("telegram", session_key)
         current_mode = stored_mode if stored_mode in {REGULAR_MODE, SMART_MODE} else REGULAR_MODE
 
-        if command_arg in {"", "toggle", "switch"}:
+        if normalized_arg in {"", "toggle", "switch"}:
             new_mode = SMART_MODE if current_mode == REGULAR_MODE else REGULAR_MODE
-        elif command_arg in {"regular", "normal", "default"}:
+        elif normalized_arg in {"regular", "normal", "default"}:
             new_mode = REGULAR_MODE
-        elif command_arg in {"smart", "think", "thinking"}:
+        elif normalized_arg in {"smart", "think", "thinking"}:
             new_mode = SMART_MODE
         else:
             return True, "Usage: /mode [regular|smart|toggle]"
@@ -518,6 +533,143 @@ class TelegramChannelProvider(ChannelProvider):
         await self.db.channel_session_mode_set("telegram", session_key, new_mode)
         active_model = self._smart_model if new_mode == SMART_MODE else self._regular_model
         return True, f"Mode switched to {new_mode}. Active model: {active_model}"
+
+    def _handle_heartbeat_command(self, command_arg: str) -> str:
+        arg = (command_arg or "").strip()
+        if not arg:
+            return self._heartbeat_show()
+
+        action, _, payload = arg.partition(" ")
+        normalized_action = action.strip().lower()
+        body = payload.strip()
+
+        if normalized_action == "show":
+            return self._heartbeat_show()
+
+        if normalized_action == "add":
+            text, output_target = self._split_output_target(body)
+            selected_target = self._normalize_output_target(
+                output_target or self._heartbeat_default_output_target
+            )
+            if not text:
+                return (
+                    "Usage: /heartbeat add <text> | output=<target> "
+                    "(example target: telegram)"
+                )
+            if not selected_target:
+                return "Please include output target, e.g. | output=telegram"
+            items = self._heartbeat_items()
+            items.append(f"- {text} | output={selected_target}")
+            self._write_heartbeat_items(items)
+            return f"Added heartbeat item #{len(items)}."
+
+        if normalized_action in {"remove", "rm", "delete", "del"}:
+            try:
+                index = int(body)
+            except ValueError:
+                return "Usage: /heartbeat remove <index>"
+            items = self._heartbeat_items()
+            if index < 1 or index > len(items):
+                return "Heartbeat item not found."
+            items.pop(index - 1)
+            self._write_heartbeat_items(items)
+            return f"Removed heartbeat item #{index}."
+
+        if normalized_action in {"edit", "set", "update"}:
+            index_token, _, remainder = body.partition(" ")
+            try:
+                index = int(index_token)
+            except ValueError:
+                return "Usage: /heartbeat edit <index> <text> | output=<target>"
+
+            items = self._heartbeat_items()
+            if index < 1 or index > len(items):
+                return "Heartbeat item not found."
+
+            updated_text, updated_target = self._split_output_target(remainder.strip())
+            if not updated_text and not updated_target:
+                return (
+                    "Usage: /heartbeat edit <index> <text> | output=<target> "
+                    "(text and/or output target required)"
+                )
+
+            current_text, current_target = self._parse_heartbeat_item(items[index - 1])
+            next_text = updated_text or current_text
+            next_target = self._normalize_output_target(
+                updated_target or current_target or self._heartbeat_default_output_target
+            )
+            if not next_target:
+                return "Please include output target, e.g. | output=telegram"
+
+            items[index - 1] = f"- {next_text} | output={next_target}"
+            self._write_heartbeat_items(items)
+            return f"Updated heartbeat item #{index}."
+
+        return (
+            "Usage: /heartbeat show | /heartbeat add <text> | output=<target> | "
+            "/heartbeat edit <index> <text> | output=<target> | "
+            "/heartbeat remove <index>"
+        )
+
+    def _heartbeat_show(self) -> str:
+        items = self._heartbeat_items()
+        listed = "\n".join([f"{idx}. {item}" for idx, item in enumerate(items, start=1)])
+        return (
+            f"interval_minutes={self._heartbeat_interval_minutes}\n"
+            f"checklist_path={self._heartbeat_checklist_path}\n"
+            f"default_output_target={self._heartbeat_default_output_target or '(unset)'}\n"
+            f"checklist:\n{listed or '(empty)'}"
+        )
+
+    def _heartbeat_items(self) -> list[str]:
+        path = Path(self._heartbeat_checklist_path)
+        if not path.exists():
+            return []
+        content = path.read_text(encoding="utf-8").splitlines()
+        return [line.strip() for line in content if line.strip().startswith("-")]
+
+    def _write_heartbeat_items(self, items: list[str]) -> None:
+        path = Path(self._heartbeat_checklist_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(items) + ("\n" if items else ""), encoding="utf-8")
+
+    @staticmethod
+    def _parse_heartbeat_item(line: str) -> tuple[str, str]:
+        raw = line.strip().removeprefix("-").strip()
+        text, sep, tail = raw.partition("|")
+        output_target = ""
+        if sep:
+            for part in tail.split("|"):
+                part = part.strip()
+                if part.lower().startswith("output="):
+                    output_target = part.split("=", 1)[1].strip()
+                    break
+        return text.strip(), output_target
+
+    @staticmethod
+    def _split_output_target(payload: str) -> tuple[str, str]:
+        raw = (payload or "").strip()
+        if not raw:
+            return "", ""
+        text, sep, tail = raw.partition("|")
+        if not sep:
+            return raw, ""
+        output_target = ""
+        for token in tail.split("|"):
+            token = token.strip()
+            if token.lower().startswith("output="):
+                output_target = token.split("=", 1)[1].strip()
+                break
+        return text.strip(), output_target
+
+    @staticmethod
+    def _normalize_output_target(value: str) -> str:
+        normalized = (value or "").strip().lower()
+        if not normalized:
+            return ""
+        if ":" in normalized:
+            normalized = normalized.split(":", 1)[0].strip()
+        return normalized
 
     def _set_status(
         self,
