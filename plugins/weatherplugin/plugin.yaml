@@ -1,5 +1,0 @@
-name: weatherplugin
-description: Fetch current weather for a city using wttr.in
-version: 0.1.0
-author: PAW
-entry_point: __init__
